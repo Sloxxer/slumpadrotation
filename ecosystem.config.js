@@ -4,7 +4,7 @@ module.exports = {
       name: 'slumpadrotation',
       script: 'node_modules/.bin/next',
       args: 'start',
-      cwd: '/var/www/slumpadrotation',
+      cwd: '/home/sloxxer/slumpadrotation',
       instances: 1,
       exec_mode: 'fork',
       watch: false,
@@ -12,7 +12,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
-        DATABASE_URL: 'file:/var/www/slumpadrotation/prisma/prod.db',
+        DATABASE_URL: 'file:/home/sloxxer/slumpadrotation/prisma/prod.db',
         SITE_ADMIN_PASSWORD: 'byt-det-har',
       },
     },
