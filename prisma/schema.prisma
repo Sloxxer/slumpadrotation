@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Department {
+  id           String     @id @default(cuid())
+  name         String
+  passwordWord String
+  archived     Boolean    @default(false)
+  archivedAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  zones        Zone[]
+  groups       Group[]
+  people       Person[]
+  rotations    Rotation[]
+  adminLogs    AdminLog[]
+}
+
+model Zone {
+  id           String      @id @default(cuid())
+  name         String
+  orderIndex   Int
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  departmentId String
+  department   Department  @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  assignments  RotationAssignment[]
+
+  @@unique([departmentId, orderIndex])
+  @@index([departmentId, orderIndex])
+  @@index([departmentId, active])
+}
+
+model Group {
+  id           String     @id @default(cuid())
+  name         String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  people       Person[]
+  rotations    Rotation[]
+
+  @@unique([departmentId, name])
+  @@index([departmentId])
+}
+
+model Person {
+  id           String     @id @default(cuid())
+  name         String
+  active       Boolean    @default(true)
+  archived     Boolean    @default(false)
+  archivedAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  departmentId String
+  groupId      String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  group        Group      @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  assignments  RotationAssignment[]
+
+  @@index([departmentId, active])
+  @@index([groupId, active])
+  @@index([departmentId, archived])
+}
+
+model Rotation {
+  id           String               @id @default(cuid())
+  createdAt    DateTime             @default(now())
+  score        Int
+  departmentId String
+  groupId      String
+  department   Department           @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  group        Group                @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  assignments  RotationAssignment[]
+
+  @@index([departmentId, groupId, createdAt(sort: Desc)])
+}
+
+model RotationAssignment {
+  id         String   @id @default(cuid())
+  rotationId String
+  zoneId     String
+  personId   String
+  zoneIndex  Int
+  rotation   Rotation @relation(fields: [rotationId], references: [id], onDelete: Cascade)
+  zone       Zone     @relation(fields: [zoneId], references: [id], onDelete: Restrict)
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@unique([rotationId, zoneId])
+  @@unique([rotationId, personId])
+  @@index([rotationId, zoneIndex])
+  @@index([zoneId])
+  @@index([personId])
+}
+
+model AdminLog {
+  id           String      @id @default(cuid())
+  eventType    String
+  message      String
+  metadata     String?
+  createdAt    DateTime    @default(now())
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([eventType, createdAt(sort: Desc)])
+  @@index([departmentId, createdAt(sort: Desc)])
+}
