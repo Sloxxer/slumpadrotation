@@ -6,17 +6,18 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./lib/**/*.{js,ts,jsx,tsx,mdx}"
   ],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        sand: "#f4efe6",
-        ink: "#10212b",
-        accent: "#d96c3c",
-        teal: "#2e6f73",
-        moss: "#758b5c"
+        sand: "rgb(var(--color-sand) / <alpha-value>)",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        accent: "rgb(var(--color-accent) / <alpha-value>)",
+        teal: "rgb(var(--color-teal) / <alpha-value>)",
+        moss: "rgb(var(--color-moss) / <alpha-value>)"
       },
       boxShadow: {
-        panel: "0 20px 55px rgba(16, 33, 43, 0.12)"
+        panel: "var(--shadow-panel)"
       }
     }
   },

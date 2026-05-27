@@ -132,7 +132,7 @@ export default async function AdminPage({
 
               <SubmitButton
                 label="Skapa avdelning"
-                className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal"
+                className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
               />
             </form>
           </Panel>
@@ -143,22 +143,22 @@ export default async function AdminPage({
               <span className="text-sm text-stone-500">{departments.length} avdelningar totalt</span>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl bg-sand p-4">
+              <div className="rounded-2xl bg-sand p-4 dark:text-stone-300">
                 <p className="text-sm text-stone-500">Aktiva</p>
                 <p className="mt-2 text-2xl font-semibold text-ink">{activeDepartments.length}</p>
               </div>
-              <div className="rounded-2xl bg-sand p-4">
+              <div className="rounded-2xl bg-sand p-4 dark:text-stone-300">
                 <p className="text-sm text-stone-500">Arkiverade</p>
                 <p className="mt-2 text-2xl font-semibold text-ink">{archivedDepartments.length}</p>
               </div>
-              <div className="rounded-2xl bg-sand p-4">
+              <div className="rounded-2xl bg-sand p-4 dark:text-stone-300">
                 <p className="text-sm text-stone-500">Kapacitetsvarningar</p>
                 <p className="mt-2 text-2xl font-semibold text-ink">{groupCapacityIssues.length}</p>
               </div>
             </div>
 
             <div className="space-y-3 text-sm text-stone-600">
-              <div className="rounded-2xl border border-stone-200 p-4">
+              <div className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                 <p className="font-medium text-ink">Avdelningar utan zoner</p>
                 <p className="mt-1">
                   {missingZones.length > 0
@@ -166,7 +166,7 @@ export default async function AdminPage({
                     : "Inga problem just nu."}
                 </p>
               </div>
-              <div className="rounded-2xl border border-stone-200 p-4">
+              <div className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                 <p className="font-medium text-ink">Avdelningar utan grupper</p>
                 <p className="mt-1">
                   {missingGroups.length > 0
@@ -174,7 +174,7 @@ export default async function AdminPage({
                     : "Inga problem just nu."}
                 </p>
               </div>
-              <div className="rounded-2xl border border-stone-200 p-4">
+              <div className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                 <p className="font-medium text-ink">Skift med för få aktiva personer</p>
                 {groupCapacityIssues.length > 0 ? (
                   <div className="mt-2 space-y-1">
@@ -189,6 +189,21 @@ export default async function AdminPage({
                 )}
               </div>
             </div>
+          </Panel>
+
+          <Panel className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-ink">Simulering</h2>
+            </div>
+            <p className="text-sm text-stone-500 dark:text-stone-400">
+              Kör rotationsalgoritmen i sekvens och analysera hur jämt zoner och grannar fördelas över tid.
+            </p>
+            <Link
+              href="/admin/simulation"
+              className="inline-flex rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
+            >
+              Öppna simuleringsverktyget
+            </Link>
           </Panel>
 
           <Panel className="space-y-4">
@@ -209,7 +224,7 @@ export default async function AdminPage({
                 />
               ) : (
                 activeDepartments.map((department) => (
-                  <div key={department.id} className="rounded-2xl border border-stone-200 p-4">
+                  <div key={department.id} className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-semibold text-ink">{department.name}</p>
@@ -254,7 +269,7 @@ export default async function AdminPage({
             ) : (
               <div className="space-y-4">
                 {departments.map((department) => (
-                  <div key={department.id} className="rounded-2xl border border-stone-200 p-4">
+                  <div key={department.id} className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-semibold text-ink">{department.name}</p>
@@ -279,7 +294,7 @@ export default async function AdminPage({
                       <SubmitButton
                         label="Byt passwordWord"
                         pendingLabel="Sparar..."
-                        className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal"
+                        className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
                       />
                     </form>
                   </div>
@@ -301,7 +316,7 @@ export default async function AdminPage({
             ) : (
               <div className="space-y-4">
                 {departments.map((department) => (
-                  <div key={department.id} className="rounded-2xl border border-stone-200 p-4">
+                  <div key={department.id} className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-semibold text-ink">{department.name}</p>
@@ -325,7 +340,7 @@ export default async function AdminPage({
                             pendingLabel="Rensar..."
                             className={`rounded-2xl px-4 py-2 text-sm font-medium ${
                               option.period === "all"
-                                ? "border border-red-300 text-red-700 hover:bg-red-50"
+                                ? "border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/30"
                                 : "border border-stone-300 hover:border-teal hover:text-teal"
                             }`}
                           />
@@ -354,7 +369,7 @@ export default async function AdminPage({
                   const metadata = parseAdminLogMetadata(log.metadata);
 
                   return (
-                    <div key={log.id} className="rounded-2xl border border-stone-200 p-4 text-sm">
+                    <div key={log.id} className="rounded-2xl border border-stone-200 p-4 text-sm dark:border-[#334155]">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <p className="font-medium text-ink">{log.message}</p>
@@ -366,7 +381,7 @@ export default async function AdminPage({
                         <span className="text-stone-500">{formatDate(log.createdAt)}</span>
                       </div>
                       {metadata ? (
-                        <div className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-500">
+                        <div className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-500 dark:bg-[#0f172a]">
                           {Object.entries(metadata).map(([key, value]) => `${key}: ${String(value)}`).join(" • ")}
                         </div>
                       ) : null}

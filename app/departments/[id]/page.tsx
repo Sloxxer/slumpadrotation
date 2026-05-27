@@ -79,7 +79,7 @@ export default async function DepartmentDetailsPage({
           </Link>
           <Link
             href={`/departments/${department.id}/rotation`}
-            className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal"
+            className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
           >
             Skapa rotation
           </Link>
@@ -100,7 +100,7 @@ export default async function DepartmentDetailsPage({
                 En snabb sammanfattning av bemanning, zoner och skift.
               </p>
             </div>
-            <div className="rounded-2xl bg-sand px-4 py-3 text-sm text-stone-700">
+            <div className="rounded-2xl bg-sand px-4 py-3 text-sm text-stone-700 dark:text-stone-300">
               <p>{department.people.length} personer totalt</p>
               <p className="mt-1">{inactivePeople} inaktiva just nu</p>
             </div>
@@ -119,7 +119,7 @@ export default async function DepartmentDetailsPage({
               <p className="text-sm text-stone-500">Aktiva personer</p>
               <p className="mt-3 text-4xl font-semibold text-ink">{activePeople}</p>
             </div>
-            <div className="rounded-[1.75rem] border border-stone-200 bg-white p-5">
+            <div className="rounded-[1.75rem] border border-stone-200 bg-white p-5 dark:border-[#334155] dark:bg-[#1e293b]">
               <p className="text-sm text-stone-500">Historik</p>
               <p className="mt-3 text-lg font-semibold text-ink">Se sparade rotationer</p>
               <Link
@@ -157,7 +157,7 @@ export default async function DepartmentDetailsPage({
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {activeZones.map((zone) => (
-                  <div key={zone.id} className="rounded-[1.6rem] border border-stone-200 bg-stone-50 p-4">
+                  <div key={zone.id} className="rounded-[1.6rem] border border-stone-200 bg-stone-50 p-4 dark:border-[#334155] dark:bg-[#0f172a]">
                     <p className="text-xs uppercase tracking-[0.22em] text-stone-500">Plats {zone.orderIndex}</p>
                     <p className="mt-3 text-lg font-semibold text-ink">{zone.name}</p>
                   </div>
@@ -182,7 +182,7 @@ export default async function DepartmentDetailsPage({
             ) : (
               <div className="space-y-3">
                 {department.groups.map((group) => (
-                  <div key={group.id} className="rounded-[1.6rem] border border-stone-200 bg-white p-4">
+                  <div key={group.id} className="rounded-[1.6rem] border border-stone-200 bg-white p-4 dark:border-[#334155] dark:bg-[#1e293b]">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-semibold text-ink">{group.name}</p>
@@ -190,7 +190,7 @@ export default async function DepartmentDetailsPage({
                           {group._count.people} personer kopplade till skiftet
                         </p>
                       </div>
-                      <span className="rounded-full bg-sand px-3 py-1 text-xs font-semibold text-stone-700">
+                      <span className="rounded-full bg-sand px-3 py-1 text-xs font-semibold text-stone-700 dark:text-stone-300">
                         {group._count.rotations} rotationer
                       </span>
                     </div>

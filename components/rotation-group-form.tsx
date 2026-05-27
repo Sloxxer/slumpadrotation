@@ -100,7 +100,7 @@ export function RotationGroupForm({
                 {zones.map((zone) => (
                   <label
                     key={zone.id}
-                    className="flex h-[84px] w-[110px] shrink-0 flex-col items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 px-2 py-2 text-center text-sm text-ink"
+                    className="flex h-[84px] w-[110px] shrink-0 flex-col items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 px-2 py-2 text-center text-sm text-ink dark:border-[#334155] dark:bg-[#0f172a]"
                   >
                     <input
                       type="checkbox"
@@ -143,7 +143,7 @@ export function RotationGroupForm({
               {selectedGroup.people.map((person) => (
                 <label
                   key={person.id}
-                  className="flex items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-ink"
+                  className="flex items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-ink dark:border-[#334155] dark:bg-[#0f172a]"
                 >
                   <input
                     type="checkbox"
@@ -165,7 +165,7 @@ export function RotationGroupForm({
         className={
           compact
             ? "grid gap-3 md:grid-cols-[minmax(0,1fr)_180px] md:items-end"
-            : "grid gap-4 border-t border-stone-200 pt-2 md:grid-cols-[minmax(0,1fr)_220px] md:items-end"
+            : "grid gap-4 border-t border-stone-200 pt-2 dark:border-[#334155] md:grid-cols-[minmax(0,1fr)_220px] md:items-end"
         }
       >
         <div className="space-y-2">
@@ -189,7 +189,7 @@ export function RotationGroupForm({
         <SubmitButton
           label="Skapa rotation"
           pendingLabel="Skapar rotation..."
-          className="w-full rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal"
+          className="w-full rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
         />
       </div>
     </form>

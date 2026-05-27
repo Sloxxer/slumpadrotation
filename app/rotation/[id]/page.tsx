@@ -88,6 +88,13 @@ export default async function PublicRotationDepartmentPage({
 
   const closeModalHref = `/rotation/${department.id}?groupId=${selectedGroupId}`;
 
+  const unassignedPeople = (() => {
+    if (!rotation) return [];
+    const assignedIds = new Set(rotation.assignments.map((a) => a.person.id));
+    const rotationGroup = department.groups.find((g) => g.id === rotation.group.id);
+    return rotationGroup?.people.filter((p) => p.active && !assignedIds.has(p.id)) ?? [];
+  })();
+
   return (
     <PageShell
       title={`Ny rotation: ${department.name}`}
@@ -124,7 +131,7 @@ export default async function PublicRotationDepartmentPage({
             </p>
           </div>
 
-          <div className="rounded-2xl bg-sand p-4 text-sm text-stone-700">
+          <div className="rounded-2xl bg-sand p-4 text-sm text-stone-700 dark:text-stone-300">
             <p>{availableZones.length} zoner tillgängliga</p>
             <p className="mt-1">Alla zoner är valda från start</p>
             <p className="mt-2">
@@ -161,6 +168,7 @@ export default async function PublicRotationDepartmentPage({
           groupName={rotation.group.name}
           score={rotation.score}
           assignments={rotation.assignments}
+          unassignedPeople={unassignedPeople}
         />
       ) : null}
     </PageShell>

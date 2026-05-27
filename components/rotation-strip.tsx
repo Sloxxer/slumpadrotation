@@ -28,7 +28,7 @@ export function RotationStrip({ assignments, large = false }: RotationStripProps
         {orderedAssignments.map((assignment) => (
           <div
             key={assignment.id ?? `${assignment.zoneIndex}-${assignment.zone.name}-${assignment.person.name}`}
-            className={`flex min-w-0 flex-col items-center justify-center rounded-[1.75rem] border border-stone-200 bg-stone-50 text-center ${
+            className={`flex min-w-0 flex-col items-center justify-center rounded-[1.75rem] border border-stone-200 bg-stone-50 text-center dark:border-[#334155] dark:bg-[#0f172a] ${
               large ? "px-5 py-8" : "px-3 py-5"
             }`}
             style={{ minHeight: large ? 180 : 124 }}

@@ -11,7 +11,7 @@ export function Panel({
   return (
     <section
       className={cn(
-        "rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur",
+        "rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur dark:border-white/10 dark:bg-[#1e293b]/85",
         className
       )}
     >
@@ -28,9 +28,9 @@ export function EmptyState({
   description: string;
 }) {
   return (
-    <div className="rounded-[2rem] border border-dashed border-stone-300 bg-stone-50/80 p-8 text-center">
+    <div className="rounded-[2rem] border border-dashed border-stone-300 bg-stone-50/80 p-8 text-center dark:border-stone-700 dark:bg-[#0f172a]/80">
       <h2 className="text-lg font-semibold text-ink">{title}</h2>
-      <p className="mt-2 text-sm text-stone-600">{description}</p>
+      <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">{description}</p>
     </div>
   );
 }

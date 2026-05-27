@@ -25,12 +25,12 @@ export function PageShell({
 }: PageShellProps) {
   return (
     <main className="space-y-8">
-      <header className="relative rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-panel backdrop-blur">
+      <header className="relative rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-panel backdrop-blur dark:border-white/10 dark:bg-[#1e293b]/80">
         <div className="absolute right-6 top-6">
           <HeaderClock />
         </div>
         {breadcrumbs && breadcrumbs.length > 0 ? (
-          <nav className="mb-4 flex flex-wrap gap-2 text-sm text-stone-500">
+          <nav className="mb-4 flex flex-wrap gap-2 text-sm text-stone-500 dark:text-stone-400">
             {breadcrumbs.map((crumb, index) => (
               <span key={`${crumb.label}-${index}`} className="flex items-center gap-2">
                 {crumb.href ? (
@@ -53,7 +53,7 @@ export function PageShell({
             </span>
             <div>
               <h1 className="text-3xl font-semibold tracking-tight text-ink">{title}</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-600">{description}</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-600 dark:text-stone-400">{description}</p>
             </div>
           </div>
           {action ? <div className={cn("flex flex-wrap gap-3 lg:justify-end")}>{action}</div> : null}

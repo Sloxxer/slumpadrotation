@@ -112,19 +112,19 @@ export default async function RotationHistoryPage({
         ) : (
           <div className="space-y-4">
             {rotations.map((rotation) => (
-              <div key={rotation.id} className="rounded-2xl border border-stone-200 p-4">
+              <div key={rotation.id} className="rounded-2xl border border-stone-200 p-4 dark:border-[#334155]">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="font-semibold text-ink">{rotation.group.name}</h2>
                     <p className="text-sm text-stone-500">{formatDate(rotation.createdAt)}</p>
                   </div>
-                  <span className="rounded-full bg-teal/10 px-3 py-1 text-xs font-semibold text-teal">
+                  <span className="rounded-full bg-teal/10 px-3 py-1 text-xs font-semibold text-teal dark:bg-teal/20">
                     Poäng {rotation.score}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 lg:grid-cols-2">
                   {rotation.assignments.map((assignment, index) => (
-                    <div key={assignment.id} className="rounded-2xl bg-stone-50 p-4 text-sm">
+                    <div key={assignment.id} className="rounded-2xl bg-stone-50 p-4 text-sm dark:bg-[#0f172a]">
                       <p className="font-medium text-ink">
                         {assignment.zone.name}: {assignment.person.name}
                       </p>
