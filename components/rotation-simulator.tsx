@@ -56,14 +56,14 @@ function runSimulation(
   }
 
   const scores = { min: Infinity, max: 0, total: 0, zeroCount: 0 };
-  let previousAssignments: ReturnType<typeof toHistoricalAssignments> | null = null;
+  let history: ReturnType<typeof toHistoricalAssignments>[] = [];
 
   for (let i = 0; i < iterations; i++) {
     const result = generateRotation({
       group,
       zones,
       people: group.people,
-      previousRotation: previousAssignments ? { assignments: previousAssignments } : null,
+      previousRotations: history.map((assignments) => ({ assignments })),
       iterations: 200
     });
 
@@ -81,7 +81,7 @@ function runSimulation(
       if (a.repeatedFrontNeighbor) stat.neighborRepetitions++;
     }
 
-    previousAssignments = toHistoricalAssignments(result);
+    history = [toHistoricalAssignments(result), ...history].slice(0, 3);
   }
 
   return {

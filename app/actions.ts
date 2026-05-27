@@ -698,7 +698,7 @@ export async function generateRotationAction(formData: FormData) {
     .getAll("activePersonIds")
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 
-  const [group, zones, groupPeople, previousRotation] = await Promise.all([
+  const [group, zones, groupPeople, previousRotations] = await Promise.all([
     prisma.group.findFirst({
       where: { id: groupId, departmentId },
       select: { id: true, name: true }
@@ -717,9 +717,10 @@ export async function generateRotationAction(formData: FormData) {
       where: { departmentId, groupId, archived: false },
       select: { id: true, name: true, active: true }
     }),
-    prisma.rotation.findFirst({
+    prisma.rotation.findMany({
       where: { departmentId, groupId },
       orderBy: { createdAt: "desc" },
+      take: 3,
       include: {
         assignments: {
           include: {
@@ -763,7 +764,7 @@ export async function generateRotationAction(formData: FormData) {
       group,
       zones,
       people: activePeople,
-      previousRotation: previousRotation ? { assignments: previousRotation.assignments } : null,
+      previousRotations: previousRotations.map((r) => ({ assignments: r.assignments })),
       iterations: 750
     });
 

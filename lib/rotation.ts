@@ -42,9 +42,9 @@ function shuffle<T>(items: T[]) {
 
 function scoreCandidate(
   candidate: CandidateAssignment[],
-  previousRotation: PreviousRotation | null
+  previousRotations: PreviousRotation[]
 ) {
-  if (!previousRotation) {
+  if (previousRotations.length === 0) {
     return {
       score: 0,
       assignments: candidate.map(({ person, zone }) => ({
@@ -59,23 +59,27 @@ function scoreCandidate(
     };
   }
 
-  const previousZoneByPerson = new Map(
-    previousRotation.assignments.map((assignment) => [assignment.personId, assignment.zoneId])
-  );
+  const previousZonesByPerson = new Map<string, Set<string>>();
+  const previousNeighborsByPerson = new Map<string, Set<string>>();
 
-  const previousFrontNeighborByPerson = new Map<string, string>();
-  const orderedPrevious = [...previousRotation.assignments].sort(
-    (a, b) => a.zoneIndex - b.zoneIndex
-  );
+  for (const prev of previousRotations) {
+    const ordered = [...prev.assignments].sort((a, b) => a.zoneIndex - b.zoneIndex);
 
-  for (let index = 0; index < orderedPrevious.length; index += 1) {
-    const frontNeighbor =
-      index === 0
-        ? orderedPrevious[orderedPrevious.length - 1]
-        : orderedPrevious[index - 1];
+    for (let i = 0; i < ordered.length; i += 1) {
+      const assignment = ordered[i];
 
-    if (frontNeighbor) {
-      previousFrontNeighborByPerson.set(orderedPrevious[index].personId, frontNeighbor.personId);
+      if (!previousZonesByPerson.has(assignment.personId)) {
+        previousZonesByPerson.set(assignment.personId, new Set());
+      }
+      previousZonesByPerson.get(assignment.personId)!.add(assignment.zoneId);
+
+      const frontNeighbor = i === 0 ? ordered[ordered.length - 1] : ordered[i - 1];
+      if (frontNeighbor) {
+        if (!previousNeighborsByPerson.has(assignment.personId)) {
+          previousNeighborsByPerson.set(assignment.personId, new Set());
+        }
+        previousNeighborsByPerson.get(assignment.personId)!.add(frontNeighbor.personId);
+      }
     }
   }
 
@@ -83,7 +87,7 @@ function scoreCandidate(
   const assignments = candidate
     .sort((a, b) => a.zone.orderIndex - b.zone.orderIndex)
     .map(({ person, zone }, index, orderedCandidate) => {
-      const repeatedZone = previousZoneByPerson.get(person.id) === zone.id;
+      const repeatedZone = previousZonesByPerson.get(person.id)?.has(zone.id) ?? false;
       const currentFrontNeighbor =
         orderedCandidate.length === 0
           ? null
@@ -92,14 +96,14 @@ function scoreCandidate(
             : orderedCandidate[index - 1]?.person.id ?? null;
       const repeatedFrontNeighbor =
         currentFrontNeighbor !== null &&
-        previousFrontNeighborByPerson.get(person.id) === currentFrontNeighbor;
+        (previousNeighborsByPerson.get(person.id)?.has(currentFrontNeighbor) ?? false);
 
       if (repeatedZone) {
         score += 100;
       }
 
       if (repeatedFrontNeighbor) {
-        score += 30;
+        score += 60;
       }
 
       return {
@@ -120,13 +124,13 @@ export function generateRotation({
   group,
   zones,
   people,
-  previousRotation,
+  previousRotations,
   iterations = 500
 }: {
   group: Pick<Group, "id" | "name">;
   zones: Array<Pick<Zone, "id" | "name" | "orderIndex">>;
   people: Array<Pick<Person, "id" | "name">>;
-  previousRotation: PreviousRotation | null;
+  previousRotations: PreviousRotation[];
   iterations?: number;
 }): GeneratedRotation {
   if (zones.length === 0) {
@@ -148,7 +152,7 @@ export function generateRotation({
       person: shuffledPeople[index]
     }));
 
-    const scored = scoreCandidate(candidate, previousRotation);
+    const scored = scoreCandidate(candidate, previousRotations);
 
     if (best === null || scored.score < best.score) {
       best = scored;
