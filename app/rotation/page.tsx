@@ -30,7 +30,7 @@ export default async function PublicRotationDepartmentsPage({
       action={
         <Link
           href="/admin"
-          className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal"
+          className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
         >
           Adminpanel
         </Link>
@@ -59,13 +59,13 @@ export default async function PublicRotationDepartmentsPage({
                 <div className="flex flex-wrap gap-3">
                   <Link
                     href={`/rotation/${department.id}`}
-                    className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal"
+                    className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
                   >
                     Välj avdelning
                   </Link>
                   <Link
                     href={`/departments/${department.id}/login`}
-                    className="rounded-2xl border border-stone-300 px-4 py-3 text-sm font-semibold hover:border-teal hover:text-teal"
+                    className="rounded-2xl border border-stone-300 px-4 py-3 text-sm font-semibold hover:border-teal hover:text-teal dark:border-[#475569] dark:text-stone-200 dark:hover:border-teal dark:hover:text-teal"
                   >
                     Logga in
                   </Link>
