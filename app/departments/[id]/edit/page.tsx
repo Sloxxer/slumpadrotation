@@ -30,7 +30,7 @@ export default async function DepartmentEditPage({
   const department = await prisma.department.findUnique({
     where: { id },
     include: {
-      zones: { orderBy: { orderIndex: "asc" } },
+      zones: { where: { temporary: false }, orderBy: { orderIndex: "asc" } },
       groups: {
         orderBy: { name: "asc" },
         include: {

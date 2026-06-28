@@ -28,12 +28,16 @@ export function HeaderClock() {
 
   return (
     <div
+      suppressHydrationWarning
       className="inline-flex self-start rounded-2xl p-[2px]"
       style={{
         background: `conic-gradient(rgb(var(--color-teal)) ${progress}%, rgb(var(--color-ink) / 0.12) ${progress}%)`
       }}
     >
-      <div className="rounded-[14px] bg-stone-50 px-4 py-2 text-xl font-semibold tabular-nums text-ink dark:bg-[#0f172a]">
+      <div
+        suppressHydrationWarning
+        className="rounded-[14px] bg-stone-50 px-4 py-2 text-xl font-semibold tabular-nums text-ink dark:bg-[#0f172a]"
+      >
         {time}
       </div>
     </div>

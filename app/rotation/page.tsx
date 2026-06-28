@@ -14,7 +14,7 @@ export default async function PublicRotationDepartmentsPage({
     where: { archived: false },
     orderBy: { createdAt: "asc" },
     include: {
-      zones: true,
+      zones: { where: { temporary: false } },
       groups: true,
       people: {
         where: { archived: false }

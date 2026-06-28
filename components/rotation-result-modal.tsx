@@ -9,6 +9,7 @@ type RotationResultModalProps = {
   departmentName: string;
   groupName: string;
   score: number;
+  animate?: boolean;
   assignments: Array<{
     id?: string;
     zoneIndex: number;
@@ -22,15 +23,70 @@ type RotationResultModalProps = {
   unassignedPeople?: Array<{ id: string; name: string }>;
 };
 
-function shuffle<T>(items: T[]) {
-  const clone = [...items];
+const ROW_HEIGHT = 48;
+const FILLER_COUNT = 24;
+const ROLL_DURATION_MS = 1400;
+const COLUMN_STAGGER_MS = 150;
 
-  for (let index = clone.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    [clone[index], clone[swapIndex]] = [clone[swapIndex], clone[index]];
-  }
+function NameReel({
+  finalName,
+  pool,
+  animate,
+  delayMs
+}: {
+  finalName: string;
+  pool: string[];
+  animate: boolean;
+  delayMs: number;
+}) {
+  // Bygg en "rulle" av slumpade namn som avslutas med rätt namn längst ned.
+  const reel = useMemo(() => {
+    if (!animate || pool.length === 0) {
+      return [finalName];
+    }
+    const fillers = Array.from(
+      { length: FILLER_COUNT },
+      () => pool[Math.floor(Math.random() * pool.length)] ?? finalName
+    );
+    return [...fillers, finalName];
+  }, [finalName, pool, animate]);
 
-  return clone;
+  const [rolling, setRolling] = useState(false);
+
+  useEffect(() => {
+    if (!animate) return;
+    // Liten fördröjning så att utgångsläget (translateY 0) hinner målas innan
+    // transitionen startar – annars hoppar rullen direkt till slutet.
+    const id = window.setTimeout(() => setRolling(true), 40);
+    return () => window.clearTimeout(id);
+  }, [animate]);
+
+  const landed = !animate || rolling;
+  const translateY = landed ? -(reel.length - 1) * ROW_HEIGHT : 0;
+
+  return (
+    <div className="mt-4 overflow-hidden" style={{ height: ROW_HEIGHT }}>
+      <div
+        style={{
+          transform: `translateY(${translateY}px)`,
+          transition:
+            animate && rolling
+              ? `transform ${ROLL_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) ${delayMs}ms`
+              : "none"
+        }}
+      >
+        {reel.map((name, index) => (
+          <div
+            key={`${index}-${name}`}
+            className="flex items-center justify-center px-1"
+            style={{ height: ROW_HEIGHT }}
+          >
+            <span className="truncate text-2xl font-medium leading-tight text-ink">{name}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function RotationResultModal({
@@ -39,6 +95,7 @@ export function RotationResultModal({
   departmentName,
   groupName,
   score,
+  animate = true,
   assignments,
   unassignedPeople = []
 }: RotationResultModalProps) {
@@ -46,47 +103,10 @@ export function RotationResultModal({
     () => [...assignments].sort((left, right) => left.zoneIndex - right.zoneIndex),
     [assignments]
   );
-  const finalNames = useMemo(
+  const pool = useMemo(
     () => orderedAssignments.map((assignment) => assignment.person.name),
     [orderedAssignments]
   );
-  const [displayNames, setDisplayNames] = useState<string[]>(() => shuffle(finalNames));
-  const [settledIndexes, setSettledIndexes] = useState<boolean[]>(() => finalNames.map(() => false));
-
-  useEffect(() => {
-    setDisplayNames(shuffle(finalNames));
-    setSettledIndexes(finalNames.map(() => false));
-
-    const interval = window.setInterval(() => {
-      setDisplayNames((currentNames) =>
-        currentNames.map((name, index) => {
-          const randomName = finalNames[Math.floor(Math.random() * finalNames.length)];
-          return randomName ?? name;
-        })
-      );
-    }, 90);
-
-    const timeouts = finalNames.map((_, index) =>
-      window.setTimeout(() => {
-        setSettledIndexes((current) => current.map((value, currentIndex) => (currentIndex === index ? true : value)));
-        setDisplayNames((current) => current.map((value, currentIndex) => (currentIndex === index ? finalNames[index] : value)));
-      }, 550 + index * 180)
-    );
-
-    const finalTimeout = window.setTimeout(() => {
-      window.clearInterval(interval);
-      setSettledIndexes(finalNames.map(() => true));
-      setDisplayNames(finalNames);
-    }, 550 + finalNames.length * 180 + 120);
-
-    return () => {
-      window.clearInterval(interval);
-      window.clearTimeout(finalTimeout);
-      for (const timeout of timeouts) {
-        window.clearTimeout(timeout);
-      }
-    };
-  }, [finalNames]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4 py-6 backdrop-blur-sm dark:bg-black/60">
@@ -135,15 +155,12 @@ export function RotationResultModal({
                     style={{ minHeight: 180 }}
                   >
                     <p className="text-xl font-semibold leading-tight text-ink">{assignment.zone.name}</p>
-                    <div className="mt-6 flex h-10 items-center overflow-hidden">
-                      <p
-                        className={`text-2xl font-medium leading-tight text-ink transition-all duration-300 ${
-                          settledIndexes[index] ? "translate-y-0 opacity-100" : "translate-y-1 opacity-75"
-                        }`}
-                      >
-                        {displayNames[index] ?? assignment.person.name}
-                      </p>
-                    </div>
+                    <NameReel
+                      finalName={assignment.person.name}
+                      pool={pool}
+                      animate={animate}
+                      delayMs={index * COLUMN_STAGGER_MS}
+                    />
                   </div>
                 ))}
               </div>

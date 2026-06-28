@@ -27,7 +27,7 @@ export default async function AdminPage({
     prisma.department.findMany({
       orderBy: { createdAt: "asc" },
       include: {
-        zones: { orderBy: { orderIndex: "asc" } },
+        zones: { where: { temporary: false }, orderBy: { orderIndex: "asc" } },
         groups: {
           orderBy: { name: "asc" },
           include: {
@@ -274,7 +274,7 @@ export default async function AdminPage({
                       <div>
                         <p className="font-semibold text-ink">{department.name}</p>
                         <p className="mt-1 text-sm text-stone-500">
-                          {department.archived ? "Arkiverad" : "Aktiv"} • {department._count.zones} zoner • {department._count.groups} grupper • {department._count.people} personer
+                          {department.archived ? "Arkiverad" : "Aktiv"} • {department.zones.length} zoner • {department._count.groups} grupper • {department._count.people} personer
                         </p>
                       </div>
                       <form action={setDepartmentArchivedAction}>

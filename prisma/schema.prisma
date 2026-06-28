@@ -27,6 +27,7 @@ model Zone {
   name         String
   orderIndex   Int
   active       Boolean     @default(true)
+  temporary    Boolean     @default(false)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   departmentId String
@@ -36,6 +37,7 @@ model Zone {
   @@unique([departmentId, orderIndex])
   @@index([departmentId, orderIndex])
   @@index([departmentId, active])
+  @@index([departmentId, temporary])
 }
 
 model Group {

@@ -12,7 +12,7 @@ export default async function PublicRotationDepartmentPage({
   searchParams
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ groupId?: string; error?: string; success?: string; rotationId?: string }>;
+  searchParams: Promise<{ groupId?: string; error?: string; success?: string; rotationId?: string; noAnim?: string }>;
 }) {
   const { id } = await params;
   const query = await searchParams;
@@ -21,6 +21,7 @@ export default async function PublicRotationDepartmentPage({
     where: { id },
     include: {
       zones: {
+        where: { temporary: false },
         orderBy: { orderIndex: "asc" }
       },
       groups: {
@@ -167,6 +168,7 @@ export default async function PublicRotationDepartmentPage({
           departmentName={department.name}
           groupName={rotation.group.name}
           score={rotation.score}
+          animate={query.noAnim !== "1"}
           assignments={rotation.assignments}
           unassignedPeople={unassignedPeople}
         />

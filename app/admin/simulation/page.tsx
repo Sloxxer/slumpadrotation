@@ -13,7 +13,7 @@ export default async function SimulationPage() {
     orderBy: { name: "asc" },
     include: {
       zones: {
-        where: { active: true },
+        where: { active: true, temporary: false },
         orderBy: { orderIndex: "asc" },
         select: { id: true, name: true, orderIndex: true }
       },

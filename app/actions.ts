@@ -17,7 +17,13 @@ import {
 import { logAdminEvent } from "@/lib/admin";
 import { prisma } from "@/lib/prisma";
 import { generateRotation } from "@/lib/rotation";
-import { departmentSchema, groupSchema, personSchema, zoneSchema } from "@/lib/validation";
+import {
+  departmentSchema,
+  groupSchema,
+  personSchema,
+  rotationZoneOrderSchema,
+  zoneSchema
+} from "@/lib/validation";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -41,6 +47,10 @@ function adminPath(tab?: string) {
 }
 
 const ZONE_TEMP_OFFSET = 1_000_000;
+// Tillfälliga "tredjeman"-zoner parkeras i ett eget högt orderIndex-intervall så
+// att de aldrig krockar med de ordinarie zonernas ordning (1..N) eller med
+// omsorterings-offseten ovan.
+const TREDJEMAN_ORDER_OFFSET = 2_000_000;
 
 function getHistoryCutoff(period: string) {
   const now = new Date();
@@ -62,7 +72,7 @@ function getHistoryCutoff(period: string) {
 
 async function normalizeZoneOrder(departmentId: string) {
   const zones = await prisma.zone.findMany({
-    where: { departmentId },
+    where: { departmentId, temporary: false },
     orderBy: [{ orderIndex: "asc" }, { createdAt: "asc" }]
   });
 
@@ -337,7 +347,7 @@ export async function createZoneAction(formData: FormData) {
     redirect(withError(`/departments/${departmentId}/edit`, "Ange ett zonnamn."));
   }
 
-  const zoneCount = await prisma.zone.count({ where: { departmentId } });
+  const zoneCount = await prisma.zone.count({ where: { departmentId, temporary: false } });
   await prisma.zone.create({
     data: {
       departmentId,
@@ -368,7 +378,7 @@ export async function updateZoneAction(formData: FormData) {
   }
 
   const zones = await prisma.zone.findMany({
-    where: { departmentId },
+    where: { departmentId, temporary: false },
     orderBy: [{ orderIndex: "asc" }, { createdAt: "asc" }]
   });
 
@@ -697,21 +707,37 @@ export async function generateRotationAction(formData: FormData) {
   const selectedPersonIds = formData
     .getAll("activePersonIds")
     .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const rawRotationZones = getString(formData, "rotationZones");
+  const skipAnimation = getString(formData, "skipAnimation") === "on";
 
-  const [group, zones, groupPeople, previousRotations] = await Promise.all([
+  // Den ordnade zonsekvensen (befintliga zoner + tillfälliga tredjeman-zoner)
+  // skickas som JSON från rotationsformuläret. Saknas den faller vi tillbaka på
+  // det äldre beteendet med kryssrutor (activeZoneIds) eller alla aktiva zoner.
+  let orderedSlots: ReturnType<typeof rotationZoneOrderSchema.parse> | null = null;
+  if (rawRotationZones) {
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(rawRotationZones);
+    } catch {
+      redirect(withError(rotationPath, "Kunde inte läsa zonordningen. Försök igen."));
+    }
+
+    const parsed = rotationZoneOrderSchema.safeParse(parsedJson);
+    if (!parsed.success) {
+      redirect(withError(rotationPath, parsed.error.issues[0]?.message ?? "Ogiltig zonordning."));
+    }
+    orderedSlots = parsed.data;
+  }
+
+  const [group, existingZones, groupPeople, previousRotations] = await Promise.all([
     prisma.group.findFirst({
       where: { id: groupId, departmentId },
       select: { id: true, name: true }
     }),
     prisma.zone.findMany({
-      where: {
-        departmentId,
-        ...(selectedZoneIds.length > 0
-          ? { id: { in: selectedZoneIds } }
-          : { active: true })
-      },
+      where: { departmentId, temporary: false },
       orderBy: { orderIndex: "asc" },
-      select: { id: true, name: true, orderIndex: true }
+      select: { id: true, name: true, orderIndex: true, active: true }
     }),
     prisma.person.findMany({
       where: { departmentId, groupId, archived: false },
@@ -736,16 +762,33 @@ export async function generateRotationAction(formData: FormData) {
     redirect(withError(rotationPath, "Välj en giltig grupp."));
   }
 
+  const existingZoneMap = new Map(existingZones.map((zone) => [zone.id, zone]));
+
+  // Validera att alla refererade befintliga zoner finns innan vi rör databasen.
+  if (orderedSlots) {
+    for (const slot of orderedSlots) {
+      if (slot.type === "existing" && !existingZoneMap.has(slot.id)) {
+        redirect(withError(rotationPath, "En vald zon finns inte längre. Ladda om sidan och försök igen."));
+      }
+    }
+  }
+
+  const activePeople = groupPeople
+    .filter((person) => selectedPersonIds.includes(person.id))
+    .map(({ id, name }) => ({ id, name }));
+
   let generated: ReturnType<typeof generateRotation>;
   let createdRotationId = "";
+  let temporaryZoneCount = 0;
 
   try {
-    await prisma.$transaction([
-      prisma.person.updateMany({
+    const result = await prisma.$transaction(async (tx) => {
+      // Sätt aktiva personer för skiftet.
+      await tx.person.updateMany({
         where: { departmentId, groupId, archived: false },
         data: { active: false }
-      }),
-      prisma.person.updateMany({
+      });
+      await tx.person.updateMany({
         where: {
           departmentId,
           groupId,
@@ -753,39 +796,83 @@ export async function generateRotationAction(formData: FormData) {
           id: { in: selectedPersonIds.length > 0 ? selectedPersonIds : ["__none__"] }
         },
         data: { active: true }
-      })
-    ]);
+      });
 
-    const activePeople = groupPeople
-      .filter((person) => selectedPersonIds.includes(person.id))
-      .map(({ id, name }) => ({ id, name }));
+      // Bygg den ordnade listan av zoner för just denna rotation. Positionen i
+      // listan blir zonens zoneIndex (cirkelordningen), oberoende av zonens
+      // permanenta orderIndex – så tredjeman-zoner kan placeras var som helst.
+      let zonesForGeneration: Array<{ id: string; name: string; orderIndex: number }>;
+      let tempCount = 0;
 
-    generated = generateRotation({
-      group,
-      zones,
-      people: activePeople,
-      previousRotations: previousRotations.map((r) => ({ assignments: r.assignments })),
-      iterations: 750
-    });
+      if (orderedSlots) {
+        const tempAggregate = await tx.zone.aggregate({
+          where: { departmentId, temporary: true },
+          _max: { orderIndex: true }
+        });
+        let nextTempOrder = Math.max(tempAggregate._max.orderIndex ?? 0, TREDJEMAN_ORDER_OFFSET - 1);
 
-    const createdRotation = await prisma.rotation.create({
-      data: {
-        departmentId,
-        groupId,
-        score: generated.score,
-        assignments: {
-          create: generated.assignments.map((assignment) => ({
-            zoneId: assignment.zoneId,
-            personId: assignment.personId,
-            zoneIndex: assignment.zoneIndex
-          }))
+        zonesForGeneration = [];
+        let position = 0;
+        for (const slot of orderedSlots) {
+          position += 1;
+          if (slot.type === "existing") {
+            const zone = existingZoneMap.get(slot.id)!;
+            zonesForGeneration.push({ id: zone.id, name: zone.name, orderIndex: position });
+          } else {
+            nextTempOrder += 1;
+            const created = await tx.zone.create({
+              data: {
+                departmentId,
+                name: slot.name,
+                temporary: true,
+                active: false,
+                orderIndex: nextTempOrder
+              },
+              select: { id: true, name: true }
+            });
+            tempCount += 1;
+            zonesForGeneration.push({ id: created.id, name: created.name, orderIndex: position });
+          }
         }
-      },
-      select: {
-        id: true
+      } else {
+        // Bakåtkompatibelt: kryssrutor eller alla aktiva zoner med sin egen ordning.
+        zonesForGeneration = existingZones
+          .filter((zone) =>
+            selectedZoneIds.length > 0 ? selectedZoneIds.includes(zone.id) : zone.active
+          )
+          .map(({ id, name, orderIndex }) => ({ id, name, orderIndex }));
       }
+
+      const generatedRotation = generateRotation({
+        group,
+        zones: zonesForGeneration,
+        people: activePeople,
+        previousRotations: previousRotations.map((r) => ({ assignments: r.assignments })),
+        iterations: 750
+      });
+
+      const createdRotation = await tx.rotation.create({
+        data: {
+          departmentId,
+          groupId,
+          score: generatedRotation.score,
+          assignments: {
+            create: generatedRotation.assignments.map((assignment) => ({
+              zoneId: assignment.zoneId,
+              personId: assignment.personId,
+              zoneIndex: assignment.zoneIndex
+            }))
+          }
+        },
+        select: { id: true }
+      });
+
+      return { generatedRotation, rotationId: createdRotation.id, tempCount };
     });
-    createdRotationId = createdRotation.id;
+
+    generated = result.generatedRotation;
+    createdRotationId = result.rotationId;
+    temporaryZoneCount = result.tempCount;
 
     await logAdminEvent({
       eventType: "rotation.created",
@@ -794,15 +881,16 @@ export async function generateRotationAction(formData: FormData) {
       metadata: {
         groupId,
         score: generated.score,
-        assignments: generated.assignments.length
+        assignments: generated.assignments.length,
+        temporaryZones: temporaryZoneCount
       }
     });
 
-      revalidatePath(`/departments/${departmentId}`);
-      revalidatePath(`/departments/${departmentId}/people`);
-      revalidatePath(`/departments/${departmentId}/rotation`);
-      revalidatePath(`/departments/${departmentId}/rotations`);
-      revalidatePath(`/rotation/${departmentId}`);
+    revalidatePath(`/departments/${departmentId}`);
+    revalidatePath(`/departments/${departmentId}/people`);
+    revalidatePath(`/departments/${departmentId}/rotation`);
+    revalidatePath(`/departments/${departmentId}/rotations`);
+    revalidatePath(`/rotation/${departmentId}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Det gick inte att skapa rotationen.";
     redirect(withError(rotationPath, message));
@@ -810,7 +898,7 @@ export async function generateRotationAction(formData: FormData) {
 
   redirect(
     withSuccess(
-      `/rotation/${departmentId}?groupId=${groupId}&rotationId=${createdRotationId}`,
+      `/rotation/${departmentId}?groupId=${groupId}&rotationId=${createdRotationId}${skipAnimation ? "&noAnim=1" : ""}`,
       `Ny rotation skapades för ${group.name}.`
     )
   );
