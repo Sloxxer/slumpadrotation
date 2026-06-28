@@ -39,6 +39,12 @@ function buildInitialOrder(zones: ZoneInput[]): OrderItem[] {
     .map((zone) => ({ kind: "existing", id: zone.id, name: zone.name, orderIndex: zone.orderIndex }));
 }
 
+// Tillfälliga zonändringar (tredjeman-zoner, omordning, avmarkeringar) sparas i en
+// modulvariabel så att de överlever själva rotationsskapandet (en klient-navigering
+// tillbaka till samma sida). Variabeln nollställs automatiskt vid en riktig
+// sidladdning – och vi nollställer den explicit när man byter skift.
+let cachedZoneOrder: { groupId: string; order: OrderItem[] } | null = null;
+
 export function RotationGroupForm({
   departmentId,
   groups,
@@ -51,17 +57,32 @@ export function RotationGroupForm({
   const [activePersonIds, setActivePersonIds] = useState<string[]>(
     selectedGroup?.people.filter((person) => person.active).map((person) => person.id) ?? []
   );
-  const [order, setOrder] = useState<OrderItem[]>(() => buildInitialOrder(zones));
+  const [order, setOrder] = useState<OrderItem[]>(() =>
+    cachedZoneOrder && cachedZoneOrder.groupId === selectedGroupId
+      ? cachedZoneOrder.order
+      : buildInitialOrder(zones)
+  );
   const [dragId, setDragId] = useState<string | null>(null);
   const tempCounter = useRef(0);
+  const previousGroupRef = useRef(selectedGroupId);
 
   useEffect(() => {
     setActivePersonIds(selectedGroup?.people.filter((person) => person.active).map((person) => person.id) ?? []);
   }, [selectedGroupId, selectedGroup]);
 
+  // Spegla aktuell zonordning till modulvariabeln så den finns kvar vid nästa
+  // rendering/navigering (men inte över en sidladdning).
   useEffect(() => {
-    setOrder(buildInitialOrder(zones));
-  }, [zones]);
+    cachedZoneOrder = { groupId: selectedGroupId, order };
+  }, [selectedGroupId, order]);
+
+  // Vid byte av skift: återgå till avdelningens standardzoner.
+  useEffect(() => {
+    if (previousGroupRef.current !== selectedGroupId) {
+      previousGroupRef.current = selectedGroupId;
+      setOrder(buildInitialOrder(zones));
+    }
+  }, [selectedGroupId, zones]);
 
   const sortedZones = useMemo(() => [...zones].sort((a, b) => a.orderIndex - b.orderIndex), [zones]);
   const includedExistingIds = useMemo(
