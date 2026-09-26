@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Panel } from "@/components/cards";
+import { DepartmentNav } from "@/components/department-nav";
 import { PageShell } from "@/components/page-shell";
 import { StatusMessage } from "@/components/status-message";
 import { requireDepartmentAuth } from "@/lib/auth";
@@ -60,22 +61,15 @@ export default async function RotationHistoryPage({
 
   return (
     <PageShell
-      title={`Rotationshistorik för ${department.name}`}
-      description="Alla genererade rotationer sparas. Filtrera per grupp för att följa återkommande mönster."
+      title="Historik"
+      description="Alla rotationer som skapats för avdelningen. Filtrera per skift för att följa mönster över tid."
       breadcrumbs={[
         { href: "/departments", label: "Avdelningar" },
         { href: `/departments/${department.id}`, label: department.name },
         { label: "Historik" }
       ]}
-      action={
-        <Link
-          href={`/departments/${department.id}/rotation`}
-          className="rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-white hover:bg-teal"
-        >
-          Ny rotation
-        </Link>
-      }
     >
+      <DepartmentNav departmentId={department.id} active="history" />
       <StatusMessage error={query.error} success={query.success} />
 
       <Panel className="space-y-5">
@@ -88,7 +82,7 @@ export default async function RotationHistoryPage({
                 : "border border-stone-300 text-stone-600 hover:border-teal hover:text-teal"
             }`}
           >
-            Alla grupper
+            Alla skift
           </Link>
           {department.groups.map((group) => (
             <Link
@@ -106,7 +100,7 @@ export default async function RotationHistoryPage({
         </div>
 
         {rotations.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6 text-sm text-stone-600">
+          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6 text-sm text-stone-600 dark:border-[#334155] dark:bg-[#0f172a] dark:text-stone-300">
             Ingen rotationshistorik matchar det valda filtret ännu.
           </div>
         ) : (

@@ -1,7 +1,9 @@
 ﻿import Link from "next/link";
-import { createPersonAction, deletePersonAction, updatePersonAction } from "@/app/actions";
+import { createPersonAction } from "@/app/actions";
 import { Panel } from "@/components/cards";
+import { DepartmentNav } from "@/components/department-nav";
 import { PageShell } from "@/components/page-shell";
+import { PeopleRegister } from "@/components/people-register";
 import { StatusMessage } from "@/components/status-message";
 import { SubmitButton } from "@/components/submit-button";
 import { requireDepartmentAuth } from "@/lib/auth";
@@ -59,35 +61,33 @@ export default async function DepartmentPeoplePage({
       ? query.groupId
       : undefined;
 
-  const filteredPeople = selectedGroupId
-    ? department.people.filter((person) => person.groupId === selectedGroupId)
-    : department.people;
+  const people = department.people.map(({ id, name, groupId, active }) => ({ id, name, groupId, active }));
+  // Ny nyckel när datan ändras (t.ex. efter att ändringarna sparats) så att
+  // registret börjar om från det som faktiskt ligger i databasen.
+  const registerKey = department.people.map((person) => `${person.id}:${person.updatedAt.getTime()}`).join("|");
 
   return (
     <PageShell
-      title={`Personer i ${department.name}`}
-      description="Varje person kopplas till en grupp. Endast aktiva personer används i rotationer."
+      title="Personer"
+      description="Varje person tillhör ett skift. Vilka som är på plats väljs på rotationssidan när rotationen skapas."
       breadcrumbs={[
         { href: "/departments", label: "Avdelningar" },
         { href: `/departments/${department.id}`, label: department.name },
         { label: "Personer" }
       ]}
-      action={
-        <Link
-          href={`/departments/${department.id}`}
-          className="rounded-2xl border border-stone-300 px-4 py-3 text-sm font-semibold hover:border-teal hover:text-teal"
-        >
-          Tillbaka till översikt
-        </Link>
-      }
     >
+      <DepartmentNav departmentId={department.id} active="people" />
       <StatusMessage error={query.error} success={query.success} />
 
       <Panel>
         <h2 className="text-lg font-semibold text-ink">Lägg till person</h2>
         {department.groups.length === 0 ? (
           <p className="mt-3 text-sm text-stone-600">
-            Skapa minst en grupp på redigeringssidan innan du lägger till personer.
+            Skapa minst ett skift under{" "}
+            <Link href={`/departments/${department.id}/edit`} className="font-medium text-teal hover:underline">
+              Zoner och skift
+            </Link>{" "}
+            innan du lägger till personer.
           </p>
         ) : (
           <div className="mt-6 space-y-4">
@@ -147,9 +147,10 @@ export default async function DepartmentPeoplePage({
             <form action={createPersonAction} className="grid gap-4 lg:grid-cols-[1fr_220px_120px_170px]">
               <input type="hidden" name="departmentId" value={department.id} />
               <input type="hidden" name="redirectGroupId" value={selectedGroupId ?? ""} />
-              <input name="name" placeholder="Namn" defaultValue={query.pendingName ?? ""} />
+              <input name="name" placeholder="Namn" aria-label="Namn" defaultValue={query.pendingName ?? ""} />
               <select
                 name="groupId"
+                aria-label="Skift"
                 defaultValue={query.pendingGroupId ?? selectedGroupId ?? department.groups[0]?.id ?? ""}
               >
                 {department.groups.map((group) => (
@@ -177,91 +178,13 @@ export default async function DepartmentPeoplePage({
       </Panel>
 
       <Panel>
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-ink">Personregister</h2>
-          <p className="text-sm text-stone-500">
-            {filteredPeople.length} personer{selectedGroupId ? " i valt skift" : " totalt"}
-          </p>
-        </div>
-
-        {department.groups.length > 0 ? (
-          <div className="mt-6 flex flex-wrap gap-2">
-            {department.groups.map((group) => (
-              <Link
-                key={group.id}
-                href={`/departments/${department.id}/people?groupId=${group.id}`}
-                className={`rounded-full px-3 py-2 text-xs font-semibold ${
-                  selectedGroupId === group.id
-                    ? "bg-ink text-white"
-                    : "border border-stone-300 text-stone-600 hover:border-teal hover:text-teal"
-                }`}
-              >
-                {group.name}
-              </Link>
-            ))}
-            <Link
-              href={`/departments/${department.id}/people`}
-              className={`rounded-full px-3 py-2 text-xs font-semibold ${
-                !query.groupId
-                  ? "bg-ink text-white"
-                  : "border border-stone-300 text-stone-600 hover:border-teal hover:text-teal"
-              }`}
-            >
-              Alla
-            </Link>
-          </div>
-        ) : null}
-
-        {filteredPeople.length === 0 ? (
-          <div className="mt-6 rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6 text-sm text-stone-600">
-            Inga personer i det valda skiftet.
-          </div>
-        ) : (
-          <div className="mt-6 space-y-4">
-            {filteredPeople.map((person) => (
-              <div key={person.id} className="rounded-2xl border border-stone-200 p-4">
-                <div className="grid gap-4 xl:grid-cols-[1fr_220px_120px_140px_140px]">
-                  <form action={updatePersonAction} className="contents">
-                    <input type="hidden" name="departmentId" value={department.id} />
-                    <input type="hidden" name="personId" value={person.id} />
-                    <input type="hidden" name="redirectGroupId" value={selectedGroupId ?? ""} />
-                    <input name="name" defaultValue={person.name} aria-label={`Namn för ${person.name}`} />
-                    <select name="groupId" defaultValue={person.groupId}>
-                      {department.groups.map((group) => (
-                        <option key={group.id} value={group.id}>
-                          {group.name}
-                        </option>
-                      ))}
-                    </select>
-                    <label className="flex items-center gap-3 rounded-2xl border border-stone-300 px-4 py-3 text-sm text-ink">
-                      <input
-                        type="checkbox"
-                        name="active"
-                        defaultChecked={person.active}
-                        className="size-4 min-h-0 w-4 rounded border-stone-300 p-0"
-                      />
-                      Aktiv
-                    </label>
-                    <SubmitButton
-                      label="Spara"
-                      className="rounded-2xl border border-stone-300 px-4 py-3 text-sm font-semibold hover:border-teal hover:text-teal"
-                    />
-                  </form>
-                  <form action={deletePersonAction}>
-                    <input type="hidden" name="departmentId" value={department.id} />
-                    <input type="hidden" name="personId" value={person.id} />
-                    <input type="hidden" name="redirectGroupId" value={selectedGroupId ?? ""} />
-                    <SubmitButton
-                      label="Ta bort"
-                      pendingLabel="Tar bort..."
-                      className="rounded-2xl border border-stone-300 px-4 py-3 text-sm font-semibold hover:border-red-400 hover:text-red-600"
-                    />
-                  </form>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <PeopleRegister
+          key={registerKey}
+          departmentId={department.id}
+          groups={department.groups.map(({ id, name }) => ({ id, name }))}
+          people={people}
+          selectedGroupId={selectedGroupId}
+        />
       </Panel>
     </PageShell>
   );

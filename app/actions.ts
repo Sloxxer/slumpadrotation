@@ -27,8 +27,10 @@ import { generateRotation } from "@/lib/rotation";
 import {
   departmentSchema,
   groupSchema,
+  peopleChangesSchema,
   personSchema,
   rotationZoneOrderSchema,
+  transferPeopleSchema,
   zoneSchema
 } from "@/lib/validation";
 
@@ -49,8 +51,13 @@ function peoplePath(departmentId: string, groupId?: string) {
   return groupId ? `/departments/${departmentId}/people?groupId=${groupId}` : `/departments/${departmentId}/people`;
 }
 
-function adminPath(tab?: string) {
-  return tab ? `/admin?tab=${tab}` : "/admin";
+// Adminpanelens flikar. `departmentId` fäller ut inställningarna för den
+// avdelningen igen efter att en åtgärd sparats.
+function adminPath(tab?: "locks" | "log" | "tools" | "transfer", departmentId?: string) {
+  const params = new URLSearchParams();
+  if (tab) params.set("tab", tab);
+  if (departmentId) params.set("dept", departmentId);
+  return params.size > 0 ? `/admin?${params.toString()}` : "/admin";
 }
 
 function isPrismaError(error: unknown, code: string) {
@@ -199,7 +206,7 @@ export async function unlockLoginAction(formData: FormData) {
   });
 
   if (!lock) {
-    redirect(withError(adminPath("security"), "Spärren finns inte längre."));
+    redirect(withError(adminPath("locks"), "Spärren finns inte längre."));
   }
 
   await prisma.loginLock.delete({ where: { id: lock.id } });
@@ -213,7 +220,174 @@ export async function unlockLoginAction(formData: FormData) {
   });
 
   revalidatePath("/admin");
-  redirect(withSuccess(adminPath("security"), `Inloggningen för ${label} låstes upp.`));
+  redirect(withSuccess(adminPath("locks"), `Inloggningen för ${label} låstes upp.`));
+}
+
+export async function renameDepartmentAction(formData: FormData) {
+  await requireSiteAdminAuth();
+  const departmentId = getString(formData, "departmentId");
+
+  const parsed = departmentSchema.pick({ name: true }).safeParse({ name: getString(formData, "name") });
+  if (!parsed.success) {
+    redirect(withError(adminPath(undefined, departmentId), parsed.error.issues[0]?.message ?? "Ogiltigt namn."));
+  }
+
+  const previous = await prisma.department.findUnique({ where: { id: departmentId }, select: { name: true } });
+  if (!previous) {
+    redirect(withError(adminPath(), "Avdelningen finns inte."));
+  }
+
+  await prisma.department.update({
+    where: { id: departmentId },
+    data: { name: parsed.data.name }
+  });
+
+  await logAdminEvent({
+    eventType: "admin.department.renamed",
+    message: `Avdelningen ${previous.name} bytte namn till ${parsed.data.name}.`,
+    departmentId
+  });
+
+  revalidatePath("/admin");
+  revalidatePath("/rotation");
+  revalidatePath(`/departments/${departmentId}`);
+  redirect(withSuccess(adminPath(undefined, departmentId), `Avdelningen heter nu ${parsed.data.name}.`));
+}
+
+// Kopierar eller flyttar personer till ett annat skift (även i en annan
+// avdelning). Personerna skapas som nya personer i målskiftet, så historiken
+// följer inte med. Vid flytt tas originalen bort ur det gamla skiftet – de som
+// finns i historiken arkiveras i stället så att den gamla historiken är intakt.
+export async function transferPeopleAction(formData: FormData) {
+  await requireSiteAdminAuth();
+  const returnPath = adminPath("transfer");
+
+  const parsed = transferPeopleSchema.safeParse({
+    sourceGroupId: getString(formData, "sourceGroupId"),
+    targetGroupId: getString(formData, "targetGroupId"),
+    mode: getString(formData, "mode"),
+    personIds: formData.getAll("personIds").filter((value): value is string => typeof value === "string")
+  });
+
+  if (!parsed.success) {
+    redirect(withError(returnPath, parsed.error.issues[0]?.message ?? "Ogiltiga val."));
+  }
+
+  const { sourceGroupId, targetGroupId, mode } = parsed.data;
+  const personIds = [...new Set(parsed.data.personIds)];
+
+  if (sourceGroupId === targetGroupId) {
+    redirect(withError(returnPath, "Välj ett annat skift att flytta eller kopiera till."));
+  }
+
+  const [sourceGroup, targetGroup] = await Promise.all([
+    prisma.group.findUnique({
+      where: { id: sourceGroupId },
+      select: { id: true, name: true, departmentId: true, department: { select: { name: true } } }
+    }),
+    prisma.group.findUnique({
+      where: { id: targetGroupId },
+      select: { id: true, name: true, departmentId: true, department: { select: { name: true } } }
+    })
+  ]);
+
+  if (!sourceGroup || !targetGroup) {
+    redirect(withError(returnPath, "Skiftet finns inte längre. Ladda om sidan och försök igen."));
+  }
+
+  const [people, targetPeople, peopleInHistory] = await Promise.all([
+    prisma.person.findMany({
+      where: { id: { in: personIds }, groupId: sourceGroup.id, archived: false },
+      select: { id: true, name: true, active: true }
+    }),
+    prisma.person.findMany({
+      where: { groupId: targetGroup.id, archived: false },
+      select: { name: true }
+    }),
+    prisma.rotationAssignment.findMany({
+      where: { personId: { in: personIds } },
+      distinct: ["personId"],
+      select: { personId: true }
+    })
+  ]);
+
+  if (people.length !== personIds.length) {
+    redirect(withError(returnPath, "En eller flera personer finns inte längre i skiftet. Ladda om sidan och försök igen."));
+  }
+
+  // Personer som redan finns (samma namn) i målskiftet hoppas över helt.
+  const normalize = (name: string) => name.trim().toLocaleLowerCase("sv-SE");
+  const existingNames = new Set(targetPeople.map((person) => normalize(person.name)));
+  const toTransfer = people.filter((person) => !existingNames.has(normalize(person.name)));
+  const skipped = people.filter((person) => existingNames.has(normalize(person.name)));
+
+  const inHistory = new Set(peopleInHistory.map((assignment) => assignment.personId));
+  const toArchive = mode === "move" ? toTransfer.filter((person) => inHistory.has(person.id)) : [];
+  const toDelete = mode === "move" ? toTransfer.filter((person) => !inHistory.has(person.id)) : [];
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (toTransfer.length > 0) {
+        await tx.person.createMany({
+          data: toTransfer.map((person) => ({
+            name: person.name,
+            active: person.active,
+            departmentId: targetGroup.departmentId,
+            groupId: targetGroup.id
+          }))
+        });
+      }
+
+      if (toArchive.length > 0) {
+        await tx.person.updateMany({
+          where: { id: { in: toArchive.map((person) => person.id) } },
+          data: { active: false, archived: true, archivedAt: new Date() }
+        });
+      }
+
+      if (toDelete.length > 0) {
+        await tx.person.deleteMany({ where: { id: { in: toDelete.map((person) => person.id) } } });
+      }
+    });
+  } catch (error) {
+    if (isPrismaError(error, "P2003")) {
+      redirect(withError(returnPath, "Någon av personerna används nu i historiken. Försök igen."));
+    }
+    throw error;
+  }
+
+  const from = `${sourceGroup.department.name} / ${sourceGroup.name}`;
+  const to = `${targetGroup.department.name} / ${targetGroup.name}`;
+  const verb = mode === "move" ? "flyttades" : "kopierades";
+  const message = [
+    `${toTransfer.length} ${toTransfer.length === 1 ? "person" : "personer"} ${verb} från ${from} till ${to}.`,
+    skipped.length > 0
+      ? `${skipped.length} hoppades över eftersom de redan fanns i ${targetGroup.name}: ${skipped.map((person) => person.name).join(", ")}.`
+      : null
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  await logAdminEvent({
+    eventType: mode === "move" ? "admin.people.moved" : "admin.people.copied",
+    message,
+    departmentId: targetGroup.departmentId,
+    metadata: {
+      from,
+      to,
+      transferred: toTransfer.length,
+      skipped: skipped.length,
+      archivedInSource: toArchive.length
+    }
+  });
+
+  for (const departmentId of new Set([sourceGroup.departmentId, targetGroup.departmentId])) {
+    revalidatePath(`/departments/${departmentId}`);
+    revalidatePath(`/departments/${departmentId}/people`);
+    revalidatePath(`/rotation/${departmentId}`);
+  }
+  revalidatePath("/admin");
+  redirect(withSuccess(returnPath, message));
 }
 
 export async function updateDepartmentPasswordWordAction(formData: FormData) {
@@ -222,7 +396,7 @@ export async function updateDepartmentPasswordWordAction(formData: FormData) {
   const passwordWord = getString(formData, "passwordWord").trim();
 
   if (!passwordWord) {
-    redirect(withError(adminPath("security"), "Ange ett nytt passwordWord."));
+    redirect(withError(adminPath(undefined, departmentId), "Ange ett nytt passwordWord."));
   }
 
   const department = await prisma.department.update({
@@ -237,7 +411,7 @@ export async function updateDepartmentPasswordWordAction(formData: FormData) {
     departmentId: department.id
   });
 
-  redirect(withSuccess(adminPath("security"), `PasswordWord uppdaterades för ${department.name}.`));
+  redirect(withSuccess(adminPath(undefined, department.id), `PasswordWord uppdaterades för ${department.name}.`));
 }
 
 export async function setDepartmentArchivedAction(formData: FormData) {
@@ -267,7 +441,7 @@ export async function setDepartmentArchivedAction(formData: FormData) {
   revalidatePath("/rotation");
   redirect(
     withSuccess(
-      adminPath("departments"),
+      adminPath(undefined, department.id),
       archived ? `Avdelningen ${department.name} arkiverades.` : `Avdelningen ${department.name} återaktiverades.`
     )
   );
@@ -285,13 +459,13 @@ export async function clearDepartmentRotationHistoryAction(formData: FormData) {
   });
 
   if (!department) {
-    redirect(withError(adminPath("history"), "Avdelningen finns inte."));
+    redirect(withError(adminPath(), "Avdelningen finns inte."));
   }
 
   const cutoff = period === "all" ? null : getHistoryCutoff(period);
 
   if (period !== "all" && !cutoff) {
-    redirect(withError(adminPath("history"), "Ogiltigt intervall för historikrensing."));
+    redirect(withError(adminPath(undefined, departmentId), "Ogiltigt intervall för historikrensing."));
   }
 
   const deleted = await prisma.rotation.deleteMany({
@@ -323,49 +497,13 @@ export async function clearDepartmentRotationHistoryAction(formData: FormData) {
   revalidatePath("/admin");
   revalidatePath("/rotation");
   revalidatePath(`/departments/${department.id}`);
-  revalidatePath(`/departments/${department.id}/rotation`);
   revalidatePath(`/departments/${department.id}/rotations`);
   redirect(
     withSuccess(
-      adminPath("history"),
+      adminPath(undefined, department.id),
       `${department.name}: ${deleted.count} rotationer rensades för ${periodLabel}.`
     )
   );
-}
-
-export async function updateDepartmentAction(formData: FormData) {
-  const departmentId = getString(formData, "departmentId");
-  await requireDepartmentAuth(departmentId);
-
-  const parsed = departmentSchema.safeParse({
-    name: getString(formData, "name"),
-    passwordWord: getString(formData, "passwordWord")
-  });
-
-  if (!parsed.success) {
-    redirect(
-      withError(`/departments/${departmentId}/edit`, parsed.error.issues[0]?.message ?? "Ogiltiga värden.")
-    );
-  }
-
-  await prisma.department.update({
-    where: { id: departmentId },
-    data: parsed.data
-  });
-
-  revalidatePath(`/departments/${departmentId}`);
-  revalidatePath(`/departments/${departmentId}/edit`);
-  redirect(withSuccess(`/departments/${departmentId}/edit`, "Avdelningen uppdaterades."));
-}
-
-export async function deleteDepartmentAction(formData: FormData) {
-  const departmentId = getString(formData, "departmentId");
-  await requireDepartmentAuth(departmentId);
-
-  await prisma.department.delete({ where: { id: departmentId } });
-  await clearDepartmentSession(departmentId);
-  revalidatePath("/departments");
-  redirect(withSuccess("/departments", "Avdelningen togs bort."));
 }
 
 export async function loginDepartmentAction(formData: FormData) {
@@ -549,7 +687,7 @@ export async function createGroupAction(formData: FormData) {
 
   const parsed = groupSchema.safeParse({ name: getString(formData, "name") });
   if (!parsed.success) {
-    redirect(withError(`/departments/${departmentId}/edit`, parsed.error.issues[0]?.message ?? "Ogiltig grupp."));
+    redirect(withError(`/departments/${departmentId}/edit`, parsed.error.issues[0]?.message ?? "Ogiltigt skift."));
   }
 
   try {
@@ -561,14 +699,14 @@ export async function createGroupAction(formData: FormData) {
     });
   } catch (error) {
     if (isPrismaError(error, "P2002")) {
-      redirect(withError(`/departments/${departmentId}/edit`, "Det finns redan en grupp med det namnet."));
+      redirect(withError(`/departments/${departmentId}/edit`, "Det finns redan ett skift med det namnet."));
     }
     throw error;
   }
 
   revalidatePath(`/departments/${departmentId}/edit`);
   revalidatePath(`/departments/${departmentId}/people`);
-  redirect(withSuccess(`/departments/${departmentId}/edit`, "Gruppen skapades."));
+  redirect(withSuccess(`/departments/${departmentId}/edit`, "Skiftet skapades."));
 }
 
 export async function updateGroupAction(formData: FormData) {
@@ -578,7 +716,7 @@ export async function updateGroupAction(formData: FormData) {
 
   const parsed = groupSchema.safeParse({ name: getString(formData, "name") });
   if (!parsed.success) {
-    redirect(withError(`/departments/${departmentId}/edit`, parsed.error.issues[0]?.message ?? "Ogiltig grupp."));
+    redirect(withError(`/departments/${departmentId}/edit`, parsed.error.issues[0]?.message ?? "Ogiltigt skift."));
   }
 
   try {
@@ -588,10 +726,10 @@ export async function updateGroupAction(formData: FormData) {
     });
   } catch (error) {
     if (isPrismaError(error, "P2025")) {
-      redirect(withError(`/departments/${departmentId}/edit`, "Gruppen finns inte."));
+      redirect(withError(`/departments/${departmentId}/edit`, "Skiftet finns inte."));
     }
     if (isPrismaError(error, "P2002")) {
-      redirect(withError(`/departments/${departmentId}/edit`, "Det finns redan en grupp med det namnet."));
+      redirect(withError(`/departments/${departmentId}/edit`, "Det finns redan ett skift med det namnet."));
     }
     throw error;
   }
@@ -599,7 +737,7 @@ export async function updateGroupAction(formData: FormData) {
   revalidatePath(`/departments/${departmentId}/edit`);
   revalidatePath(`/departments/${departmentId}/people`);
   revalidatePath(`/departments/${departmentId}`);
-  redirect(withSuccess(`/departments/${departmentId}/edit`, "Gruppen uppdaterades."));
+  redirect(withSuccess(`/departments/${departmentId}/edit`, "Skiftet uppdaterades."));
 }
 
 export async function deleteGroupAction(formData: FormData) {
@@ -617,14 +755,14 @@ export async function deleteGroupAction(formData: FormData) {
   });
 
   if (!group) {
-    redirect(withError(`/departments/${departmentId}/edit`, "Gruppen finns inte."));
+    redirect(withError(`/departments/${departmentId}/edit`, "Skiftet finns inte."));
   }
 
   if (group._count.people > 0 || group._count.rotations > 0) {
     redirect(
       withError(
         `/departments/${departmentId}/edit`,
-        "Gruppen kan inte tas bort eftersom den har personer eller rotationshistorik."
+        "Skiftet kan inte tas bort eftersom det har personer eller rotationshistorik."
       )
     );
   }
@@ -633,7 +771,7 @@ export async function deleteGroupAction(formData: FormData) {
   revalidatePath(`/departments/${departmentId}/edit`);
   revalidatePath(`/departments/${departmentId}/people`);
   revalidatePath(`/departments/${departmentId}`);
-  redirect(withSuccess(`/departments/${departmentId}/edit`, "Gruppen togs bort."));
+  redirect(withSuccess(`/departments/${departmentId}/edit`, "Skiftet togs bort."));
 }
 
 export async function createPersonAction(formData: FormData) {
@@ -654,7 +792,7 @@ export async function createPersonAction(formData: FormData) {
   }
 
   if (!(await groupBelongsToDepartment(parsed.data.groupId, departmentId))) {
-    redirect(withError(`/departments/${departmentId}/people`, "Välj en giltig grupp."));
+    redirect(withError(`/departments/${departmentId}/people`, "Välj ett giltigt skift."));
   }
 
   const duplicateRedirectPath = peoplePath(departmentId, redirectGroupId || parsed.data.groupId);
@@ -721,7 +859,6 @@ export async function createPersonAction(formData: FormData) {
     });
 
     revalidatePath(`/departments/${departmentId}/people`);
-    revalidatePath(`/departments/${departmentId}/rotation`);
     revalidatePath(`/departments/${departmentId}`);
     redirect(withSuccess(duplicateRedirectPath, "Den arkiverade personen återaktiverades."));
   }
@@ -736,88 +873,103 @@ export async function createPersonAction(formData: FormData) {
   });
 
   revalidatePath(`/departments/${departmentId}/people`);
-  revalidatePath(`/departments/${departmentId}/rotation`);
   revalidatePath(`/departments/${departmentId}`);
   redirect(withSuccess(peoplePath(departmentId, redirectGroupId || parsed.data.groupId), "Personen skapades."));
 }
 
-export async function updatePersonAction(formData: FormData) {
+// Sparar alla ändringar i personregistret på en gång: namn, skift, aktiv och
+// borttagningar. Personer som finns i rotationshistoriken arkiveras i stället
+// för att tas bort, så att historiken behålls.
+export async function savePeopleAction(formData: FormData) {
   const departmentId = getString(formData, "departmentId");
-  const personId = getString(formData, "personId");
   const redirectGroupId = getString(formData, "redirectGroupId");
   await requireDepartmentAuth(departmentId);
+  const returnPath = peoplePath(departmentId, redirectGroupId || undefined);
 
-  const parsed = personSchema.safeParse({
-    name: getString(formData, "name"),
-    groupId: getString(formData, "groupId"),
-    active: getString(formData, "active") === "on"
-  });
+  let rawChanges: unknown;
+  try {
+    rawChanges = JSON.parse(getString(formData, "changes"));
+  } catch {
+    redirect(withError(returnPath, "Kunde inte läsa ändringarna. Försök igen."));
+  }
 
+  const parsed = peopleChangesSchema.safeParse(rawChanges);
   if (!parsed.success) {
-    redirect(withError(`/departments/${departmentId}/people`, parsed.error.issues[0]?.message ?? "Ogiltig person."));
+    redirect(withError(returnPath, parsed.error.issues[0]?.message ?? "Ogiltiga ändringar."));
   }
 
-  if (!(await groupBelongsToDepartment(parsed.data.groupId, departmentId))) {
-    redirect(withError(peoplePath(departmentId, redirectGroupId), "Välj en giltig grupp."));
+  const changes = parsed.data;
+  const personIds = [...new Set(changes.map((change) => change.id))];
+
+  const [people, groups, peopleInHistory] = await Promise.all([
+    prisma.person.findMany({
+      where: { id: { in: personIds }, departmentId, archived: false },
+      select: { id: true }
+    }),
+    prisma.group.findMany({ where: { departmentId }, select: { id: true } }),
+    prisma.rotationAssignment.findMany({
+      where: { personId: { in: personIds } },
+      distinct: ["personId"],
+      select: { personId: true }
+    })
+  ]);
+
+  if (people.length !== personIds.length || personIds.length !== changes.length) {
+    redirect(withError(returnPath, "En eller flera personer finns inte längre. Ladda om sidan och försök igen."));
   }
+
+  const departmentGroupIds = new Set(groups.map((group) => group.id));
+  if (changes.some((change) => !change.remove && !departmentGroupIds.has(change.groupId))) {
+    redirect(withError(returnPath, "Välj ett giltigt skift."));
+  }
+
+  const inHistory = new Set(peopleInHistory.map((assignment) => assignment.personId));
+  const toArchive = changes.filter((change) => change.remove && inHistory.has(change.id));
+  const toDelete = changes.filter((change) => change.remove && !inHistory.has(change.id));
+  const toUpdate = changes.filter((change) => !change.remove);
 
   try {
-    await prisma.person.update({
-      where: { id: personId, departmentId },
-      data: parsed.data
+    await prisma.$transaction(async (tx) => {
+      for (const change of toUpdate) {
+        await tx.person.update({
+          where: { id: change.id, departmentId },
+          data: { name: change.name, groupId: change.groupId, active: change.active }
+        });
+      }
+
+      if (toArchive.length > 0) {
+        await tx.person.updateMany({
+          where: { id: { in: toArchive.map((change) => change.id) }, departmentId },
+          data: { active: false, archived: true, archivedAt: new Date() }
+        });
+      }
+
+      if (toDelete.length > 0) {
+        await tx.person.deleteMany({
+          where: { id: { in: toDelete.map((change) => change.id) }, departmentId }
+        });
+      }
     });
   } catch (error) {
-    if (isPrismaError(error, "P2025")) {
-      redirect(withError(peoplePath(departmentId, redirectGroupId), "Personen finns inte."));
-    }
-    throw error;
-  }
-
-  revalidatePath(`/departments/${departmentId}/people`);
-  revalidatePath(`/departments/${departmentId}/rotation`);
-  revalidatePath(`/departments/${departmentId}`);
-  redirect(withSuccess(peoplePath(departmentId, redirectGroupId), "Personen uppdaterades."));
-}
-
-export async function deletePersonAction(formData: FormData) {
-  const departmentId = getString(formData, "departmentId");
-  const personId = getString(formData, "personId");
-  const redirectGroupId = getString(formData, "redirectGroupId");
-  await requireDepartmentAuth(departmentId);
-
-  try {
-    await prisma.person.delete({ where: { id: personId, departmentId } });
-  } catch (error) {
-    if (isPrismaError(error, "P2025")) {
-      redirect(withError(peoplePath(departmentId, redirectGroupId), "Personen finns inte."));
-    }
+    // Någon hann skapa en rotation med en av personerna medan sidan var öppen.
     if (isPrismaError(error, "P2003")) {
-      await prisma.person.update({
-        where: { id: personId, departmentId },
-        data: {
-          active: false,
-          archived: true,
-          archivedAt: new Date()
-        }
-      });
-
-      revalidatePath(`/departments/${departmentId}/people`);
-      revalidatePath(`/departments/${departmentId}/rotation`);
-      revalidatePath(`/departments/${departmentId}`);
-      redirect(
-        withSuccess(
-          peoplePath(departmentId, redirectGroupId),
-          "Personen finns i historiken och arkiverades i stället för att tas bort."
-        )
-      );
+      redirect(withError(returnPath, "Någon av personerna används nu i historiken. Försök igen."));
     }
     throw error;
   }
 
+  const summary = [
+    toUpdate.length > 0 ? `${toUpdate.length} uppdaterade` : null,
+    toDelete.length > 0 ? `${toDelete.length} borttagna` : null,
+    toArchive.length > 0 ? `${toArchive.length} arkiverade eftersom de finns i historiken` : null
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   revalidatePath(`/departments/${departmentId}/people`);
-  revalidatePath(`/departments/${departmentId}/rotation`);
   revalidatePath(`/departments/${departmentId}`);
-  redirect(withSuccess(peoplePath(departmentId, redirectGroupId), "Personen togs bort."));
+  revalidatePath(`/rotation/${departmentId}`);
+  redirect(withSuccess(returnPath, `Ändringarna sparades: ${summary}.`));
 }
 
 export async function generateRotationAction(formData: FormData) {
@@ -883,7 +1035,7 @@ export async function generateRotationAction(formData: FormData) {
   ]);
 
   if (!group) {
-    redirect(withError(rotationPath, "Välj en giltig grupp."));
+    redirect(withError(rotationPath, "Välj ett giltigt skift."));
   }
 
   const existingZoneMap = new Map(existingZones.map((zone) => [zone.id, zone]));
@@ -1012,7 +1164,6 @@ export async function generateRotationAction(formData: FormData) {
 
     revalidatePath(`/departments/${departmentId}`);
     revalidatePath(`/departments/${departmentId}/people`);
-    revalidatePath(`/departments/${departmentId}/rotation`);
     revalidatePath(`/departments/${departmentId}/rotations`);
     revalidatePath(`/rotation/${departmentId}`);
   } catch (error) {
