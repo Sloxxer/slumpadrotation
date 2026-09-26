@@ -80,9 +80,15 @@ export async function clearDepartmentSession(departmentId: string) {
   cookieStore.delete(`${COOKIE_PREFIX}${departmentId}`);
 }
 
-export async function isDepartmentAuthenticated(departmentId: string) {
+// Inloggad direkt på just den här avdelningen (med avdelningens lösenord).
+export async function hasDepartmentSession(departmentId: string) {
   const cookieStore = await cookies();
   return verifySessionValue(departmentScope(departmentId), cookieStore.get(`${COOKIE_PREFIX}${departmentId}`)?.value);
+}
+
+// Siteadmin har tillgång till alla avdelningar utan avdelningslösenord.
+export async function isDepartmentAuthenticated(departmentId: string) {
+  return (await hasDepartmentSession(departmentId)) || (await isSiteAdminAuthenticated());
 }
 
 export async function requireDepartmentAuth(departmentId: string) {

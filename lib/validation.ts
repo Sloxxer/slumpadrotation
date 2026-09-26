@@ -12,7 +12,7 @@ export const zoneSchema = z.object({
 });
 
 export const groupSchema = z.object({
-  name: z.string().trim().min(1, "Ange ett gruppnamn.")
+  name: z.string().trim().min(1, "Ange ett namn för skiftet.")
 });
 
 // Beskriver ordningen av zoner för en enskild rotation. Befintliga zoner
@@ -33,6 +33,27 @@ export const rotationZoneOrderSchema = z
 
 export const personSchema = z.object({
   name: z.string().trim().min(1, "Ange ett namn."),
-  groupId: z.string().trim().min(1, "Välj en grupp."),
+  groupId: z.string().trim().min(1, "Välj ett skift."),
   active: z.boolean().default(true)
 });
+
+// Siteadmin kopierar eller flyttar personer mellan skift/avdelningar.
+export const transferPeopleSchema = z.object({
+  sourceGroupId: z.string().trim().min(1, "Välj vilket skift personerna ska hämtas från."),
+  targetGroupId: z.string().trim().min(1, "Välj vilket skift personerna ska till."),
+  mode: z.enum(["copy", "move"], { message: "Välj om personerna ska kopieras eller flyttas." }),
+  personIds: z.array(z.string().trim().min(1)).min(1, "Välj minst en person.").max(500, "För många personer på en gång.")
+});
+
+// Ändringar från personregistret som sparas i ett svep. Bara ändrade rader skickas.
+export const peopleChangesSchema = z
+  .array(
+    personSchema.extend({
+      id: z.string().trim().min(1),
+      name: z.string().trim().min(1, "Alla personer måste ha ett namn."),
+      active: z.boolean(),
+      remove: z.boolean().default(false)
+    })
+  )
+  .min(1, "Det finns inga ändringar att spara.")
+  .max(500, "För många ändringar på en gång.");

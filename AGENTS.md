@@ -61,4 +61,6 @@ SESSION_SECRET="..."   # signs auth cookies; random per-process fallback if unse
 - `lib/utils.ts` exports `cn()` (clsx wrapper) and `formatDate()` (sv-SE locale).
 - `lib/prisma.ts` exports a singleton Prisma client — always import from there, never instantiate directly.
 - Pages that require auth call `requireDepartmentAuth(departmentId)` or `requireSiteAdminAuth()` from `lib/auth.ts` at the top and redirect on failure.
+- A site admin session also satisfies `requireDepartmentAuth` (admins can open every department from `/admin`). Use `hasDepartmentSession()` when you need to know whether the user logged in with the department's own password.
+- Department users may only manage zones, shifts (`Group`) and people, and view history. Renaming, passwordWord changes, archiving, history cleanup and moving people between departments are site-admin-only actions.
 - After mutations, call `revalidatePath()` to bust the Next.js cache for affected routes.
