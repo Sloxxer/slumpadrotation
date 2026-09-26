@@ -1,10 +1,10 @@
 ﻿import Link from "next/link";
 import { loginDepartmentAction } from "@/app/actions";
-import { shouldShowDepartmentLoginHint } from "@/lib/auth";
 import { Panel } from "@/components/cards";
 import { PageShell } from "@/components/page-shell";
 import { StatusMessage } from "@/components/status-message";
 import { SubmitButton } from "@/components/submit-button";
+import { getClientIp, getLoginLockStatus, loginLockMessage } from "@/lib/login-lock";
 import { prisma } from "@/lib/prisma";
 
 export default async function DepartmentLoginPage({
@@ -20,7 +20,6 @@ export default async function DepartmentLoginPage({
     where: { id },
     select: { id: true, name: true }
   });
-  const showLoginHint = await shouldShowDepartmentLoginHint(id);
 
   if (!department) {
     return (
@@ -41,6 +40,9 @@ export default async function DepartmentLoginPage({
     );
   }
 
+  const lockStatus = await getLoginLockStatus({ kind: "department", departmentId: department.id }, await getClientIp());
+  const showLoginHint = !lockStatus.locked && lockStatus.failures >= 2;
+
   return (
     <PageShell
       title={`Logga in: ${department.name}`}
@@ -51,7 +53,20 @@ export default async function DepartmentLoginPage({
       ]}
     >
       <Panel className="max-w-2xl">
-        <StatusMessage error={query.error} success={query.success} />
+        <StatusMessage
+          error={lockStatus.locked ? loginLockMessage(lockStatus) : query.error}
+          success={lockStatus.locked ? undefined : query.success}
+        />
+
+        {lockStatus.locked ? (
+          <p className="mt-4 text-sm text-stone-600 dark:text-stone-300">
+            Det går fortfarande att skapa rotationer via{" "}
+            <Link href={`/rotation/${department.id}`} className="font-medium text-teal hover:underline">
+              den publika rotationssidan
+            </Link>
+            .
+          </p>
+        ) : null}
 
         <form action={loginDepartmentAction} className="mt-6 space-y-5">
           <input type="hidden" name="departmentId" value={department.id} />
@@ -66,14 +81,15 @@ export default async function DepartmentLoginPage({
             <label htmlFor="password" className="text-sm font-medium text-ink">
               Lösenord
             </label>
-            <input id="password" name="password" type="password" autoFocus />
+            <input id="password" name="password" type="password" autoFocus disabled={lockStatus.locked} />
           </div>
 
           <div className="flex flex-wrap gap-3">
             <SubmitButton
               label="Logga in"
               pendingLabel="Loggar in..."
-              className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal"
+              disabled={lockStatus.locked}
+              className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-teal disabled:cursor-not-allowed disabled:opacity-40"
             />
             <Link
               href="/departments"

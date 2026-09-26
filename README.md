@@ -18,6 +18,7 @@ Appen körs på [http://localhost:3000](http://localhost:3000).
 |---|---|
 | `DATABASE_URL` | Sökväg till SQLite-databasen, t.ex. `file:./prisma/dev.db` |
 | `SITE_ADMIN_PASSWORD` | Lösenord för siteadmin-inloggning |
+| `SESSION_SECRET` | Hemlig nyckel som signerar inloggningscookies (`openssl rand -hex 32`). Saknas den används en slumpad nyckel och alla loggas ut vid omstart |
 
 ## Kommandon
 
@@ -40,11 +41,13 @@ npm run prisma:studio    # Öppnar Prisma GUI
 
 Scriptet hämtar senaste koden från GitHub, installerar beroenden, bygger appen och startar om PM2-processen.
 
+I produktion lyssnar appen bara på `127.0.0.1:3001` och nås via en Cloudflare Tunnel (`cloudflared` på samma maskin). Inloggningsspärren läser klientens IP från `CF-Connecting-IP`. `npm run dev` påverkas inte och fungerar utan tunnel.
+
 Första gången på servern:
 
 ```bash
 chmod +x deploy.sh
-cp .env.example .env     # Fyll i DATABASE_URL och SITE_ADMIN_PASSWORD
+cp .env.example .env     # Fyll i DATABASE_URL, SITE_ADMIN_PASSWORD och SESSION_SECRET
 npm run prisma:migrate -- --name init
 pm2 start ecosystem.config.js
 pm2 save
@@ -54,13 +57,13 @@ pm2 save
 
 - **Next.js 15 App Router** — inga API-routes, alla mutationer går via server actions i `app/actions.ts`
 - **Prisma + SQLite** — databasmodeller i `prisma/schema.prisma`
-- **Auth** — två separata cookie-sessioner: avdelning (8h TTL) och siteadmin. Avdelningslösenordet är `passwordWord + aktuell serverminut`
+- **Auth** — två separata HMAC-signerade cookie-sessioner: avdelning (8h TTL) och siteadmin. Avdelningslösenordet är `passwordWord + aktuell serverminut`
 - **Rotationsalgoritm** — `lib/rotation.ts` tilldelar personer till zoner med ett poängsystem som undviker upprepade zoner och grannar mot de 3 senaste rotationerna
 
 ## Funktioner
 
 - Hantering av avdelningar, zoner, grupper och personer
-- Avdelningsinloggning med tidsbegränsat lösenord
+- Avdelningsinloggning med tidsbegränsat lösenord och spärr efter för många felförsök (4 försök → 10 min spärr → 2 försök → låst tills siteadmin låser upp)
 - Slumpad rotation med poängbaserad algoritm
 - Visning av personer som inte är tilldelade en zon
 - Sparad rotationshistorik

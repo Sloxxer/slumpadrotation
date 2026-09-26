@@ -1,9 +1,64 @@
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 const COOKIE_PREFIX = "department-auth-";
-const LOGIN_ATTEMPT_PREFIX = "department-login-attempts-";
 const SITE_ADMIN_COOKIE = "site-admin-auth";
+const SESSION_TTL_SECONDS = 60 * 60 * 8;
+
+const globalForSession = globalThis as unknown as { sessionSecret?: string };
+
+// Sessionscookies signeras med HMAC så att de inte kan förfalskas i webbläsaren.
+// Utan SESSION_SECRET används en slumpad nyckel per serverprocess – då loggas
+// alla ut vid omstart, men cookies kan fortfarande inte förfalskas.
+function getSessionSecret() {
+  const configured = process.env.SESSION_SECRET?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  globalForSession.sessionSecret ??= randomBytes(32).toString("hex");
+  return globalForSession.sessionSecret;
+}
+
+function signSession(scope: string, expiresAt: number) {
+  return createHmac("sha256", getSessionSecret()).update(`${scope}:${expiresAt}`).digest("base64url");
+}
+
+function createSessionValue(scope: string) {
+  const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
+  return `${expiresAt}.${signSession(scope, expiresAt)}`;
+}
+
+function verifySessionValue(scope: string, value: string | undefined) {
+  if (!value) {
+    return false;
+  }
+
+  const [rawExpiresAt, signature] = value.split(".");
+  const expiresAt = Number.parseInt(rawExpiresAt ?? "", 10);
+
+  if (!signature || !Number.isFinite(expiresAt) || expiresAt < Date.now()) {
+    return false;
+  }
+
+  const expected = Buffer.from(signSession(scope, expiresAt));
+  const actual = Buffer.from(signature);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+// Jämför lösenord i konstant tid (hashning gör längderna lika).
+export function passwordsMatch(input: string, expected: string) {
+  const a = createHash("sha256").update(input).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+function departmentScope(departmentId: string) {
+  return `department:${departmentId}`;
+}
+
+const SITE_ADMIN_SCOPE = "site-admin";
 
 export function createDepartmentPassword(passwordWord: string, now = new Date()) {
   return `${passwordWord}${now.getMinutes()}`;
@@ -11,12 +66,12 @@ export function createDepartmentPassword(passwordWord: string, now = new Date())
 
 export async function setDepartmentSession(departmentId: string) {
   const cookieStore = await cookies();
-  cookieStore.set(`${COOKIE_PREFIX}${departmentId}`, "ok", {
+  cookieStore.set(`${COOKIE_PREFIX}${departmentId}`, createSessionValue(departmentScope(departmentId)), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 8
+    maxAge: SESSION_TTL_SECONDS
   });
 }
 
@@ -25,68 +80,9 @@ export async function clearDepartmentSession(departmentId: string) {
   cookieStore.delete(`${COOKIE_PREFIX}${departmentId}`);
 }
 
-export async function registerFailedDepartmentLogin(departmentId: string) {
-  const cookieStore = await cookies();
-  const key = `${LOGIN_ATTEMPT_PREFIX}${departmentId}`;
-  const now = Date.now();
-  const current = cookieStore.get(key)?.value;
-
-  let count = 1;
-  let firstAttemptAt = now;
-
-  if (current) {
-    const [savedCount, savedTimestamp] = current.split(":");
-    const parsedCount = Number.parseInt(savedCount ?? "", 10);
-    const parsedTimestamp = Number.parseInt(savedTimestamp ?? "", 10);
-
-    if (Number.isFinite(parsedCount) && Number.isFinite(parsedTimestamp) && now - parsedTimestamp < 60_000) {
-      count = parsedCount + 1;
-      firstAttemptAt = parsedTimestamp;
-    }
-  }
-
-  cookieStore.set(key, `${count}:${firstAttemptAt}`, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60
-  });
-
-  return count;
-}
-
-export async function clearFailedDepartmentLogins(departmentId: string) {
-  const cookieStore = await cookies();
-  cookieStore.delete(`${LOGIN_ATTEMPT_PREFIX}${departmentId}`);
-}
-
-export async function shouldShowDepartmentLoginHint(departmentId: string) {
-  const cookieStore = await cookies();
-  const current = cookieStore.get(`${LOGIN_ATTEMPT_PREFIX}${departmentId}`)?.value;
-
-  if (!current) {
-    return false;
-  }
-
-  const [savedCount, savedTimestamp] = current.split(":");
-  const parsedCount = Number.parseInt(savedCount ?? "", 10);
-  const parsedTimestamp = Number.parseInt(savedTimestamp ?? "", 10);
-
-  if (!Number.isFinite(parsedCount) || !Number.isFinite(parsedTimestamp)) {
-    return false;
-  }
-
-  if (Date.now() - parsedTimestamp >= 60_000) {
-    return false;
-  }
-
-  return parsedCount > 2;
-}
-
 export async function isDepartmentAuthenticated(departmentId: string) {
   const cookieStore = await cookies();
-  return cookieStore.get(`${COOKIE_PREFIX}${departmentId}`)?.value === "ok";
+  return verifySessionValue(departmentScope(departmentId), cookieStore.get(`${COOKIE_PREFIX}${departmentId}`)?.value);
 }
 
 export async function requireDepartmentAuth(departmentId: string) {
@@ -98,12 +94,12 @@ export async function requireDepartmentAuth(departmentId: string) {
 
 export async function setSiteAdminSession() {
   const cookieStore = await cookies();
-  cookieStore.set(SITE_ADMIN_COOKIE, "ok", {
+  cookieStore.set(SITE_ADMIN_COOKIE, createSessionValue(SITE_ADMIN_SCOPE), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 8
+    maxAge: SESSION_TTL_SECONDS
   });
 }
 
@@ -114,7 +110,7 @@ export async function clearSiteAdminSession() {
 
 export async function isSiteAdminAuthenticated() {
   const cookieStore = await cookies();
-  return cookieStore.get(SITE_ADMIN_COOKIE)?.value === "ok";
+  return verifySessionValue(SITE_ADMIN_SCOPE, cookieStore.get(SITE_ADMIN_COOKIE)?.value);
 }
 
 export async function requireSiteAdminAuth() {
