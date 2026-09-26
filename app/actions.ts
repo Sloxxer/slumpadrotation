@@ -4,17 +4,24 @@ import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
-  clearFailedDepartmentLogins,
   clearDepartmentSession,
   clearSiteAdminSession,
   createDepartmentPassword,
+  passwordsMatch,
   requireSiteAdminAuth,
-  registerFailedDepartmentLogin,
   requireDepartmentAuth,
   setSiteAdminSession,
   setDepartmentSession
 } from "@/lib/auth";
 import { logAdminEvent } from "@/lib/admin";
+import {
+  clearLoginLock,
+  failedLoginMessage,
+  getClientIp,
+  getLoginLockStatus,
+  loginLockMessage,
+  registerFailedLogin
+} from "@/lib/login-lock";
 import { prisma } from "@/lib/prisma";
 import { generateRotation } from "@/lib/rotation";
 import {
@@ -44,6 +51,16 @@ function peoplePath(departmentId: string, groupId?: string) {
 
 function adminPath(tab?: string) {
   return tab ? `/admin?tab=${tab}` : "/admin";
+}
+
+function isPrismaError(error: unknown, code: string) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
+}
+
+// Id:n i formulären kommer från klienten – kontrollera alltid att raden tillhör
+// avdelningen man är inloggad på innan den ändras.
+async function groupBelongsToDepartment(groupId: string, departmentId: string) {
+  return (await prisma.group.count({ where: { id: groupId, departmentId } })) > 0;
 }
 
 const ZONE_TEMP_OFFSET = 1_000_000;
@@ -122,14 +139,39 @@ export async function loginSiteAdminAction(formData: FormData) {
     redirect(withError("/admin/login", "SITE_ADMIN_PASSWORD saknas i miljöinställningarna."));
   }
 
-  if (password !== expectedPassword) {
-    await logAdminEvent({
-      eventType: "admin.login.failed",
-      message: "Fel siteadmin-lösenord angavs."
-    });
-    redirect(withError("/admin/login", "Fel siteadmin-lösenord."));
+  const ip = await getClientIp();
+  const lockTarget = { kind: "site-admin" } as const;
+  const lockStatus = await getLoginLockStatus(lockTarget, ip);
+
+  if (lockStatus.locked) {
+    redirect(withError("/admin/login", loginLockMessage(lockStatus)));
   }
 
+  if (!passwordsMatch(password, expectedPassword)) {
+    const result = await registerFailedLogin(lockTarget, ip);
+    await logAdminEvent({
+      eventType: "admin.login.failed",
+      message: "Fel siteadmin-lösenord angavs.",
+      metadata: { ip }
+    });
+
+    if (result.justLocked) {
+      await logAdminEvent({
+        eventType: "admin.login.locked",
+        message: "Siteadmin-inloggningen spärrades i 10 minuter efter för många felaktiga försök.",
+        metadata: { ip }
+      });
+    }
+
+    redirect(
+      withError(
+        "/admin/login",
+        result.status.locked ? loginLockMessage(result.status) : failedLoginMessage(result.attemptsLeft)
+      )
+    );
+  }
+
+  await clearLoginLock(lockTarget, ip);
   await setSiteAdminSession();
   await logAdminEvent({
     eventType: "admin.login.success",
@@ -145,6 +187,33 @@ export async function logoutSiteAdminAction() {
   });
   await clearSiteAdminSession();
   redirect(withSuccess("/departments", "Siteadmin utloggad."));
+}
+
+export async function unlockLoginAction(formData: FormData) {
+  await requireSiteAdminAuth();
+  const lockId = getString(formData, "lockId");
+
+  const lock = await prisma.loginLock.findUnique({
+    where: { id: lockId },
+    include: { department: { select: { name: true } } }
+  });
+
+  if (!lock) {
+    redirect(withError(adminPath("security"), "Spärren finns inte längre."));
+  }
+
+  await prisma.loginLock.delete({ where: { id: lock.id } });
+
+  const label = lock.department ? `avdelningen ${lock.department.name}` : "siteadmin";
+  await logAdminEvent({
+    eventType: "admin.login.unlocked",
+    message: `Inloggningen för ${label} låstes upp.`,
+    departmentId: lock.departmentId ?? undefined,
+    metadata: { ip: lock.ip }
+  });
+
+  revalidatePath("/admin");
+  redirect(withSuccess(adminPath("security"), `Inloggningen för ${label} låstes upp.`));
 }
 
 export async function updateDepartmentPasswordWordAction(formData: FormData) {
@@ -312,23 +381,47 @@ export async function loginDepartmentAction(formData: FormData) {
     redirect(withError("/departments", "Avdelningen finns inte."));
   }
 
-  if (password !== createDepartmentPassword(department.passwordWord)) {
-    await registerFailedDepartmentLogin(department.id);
+  const loginPath = `/departments/${department.id}/login`;
+  const ip = await getClientIp();
+  const lockTarget = { kind: "department", departmentId: department.id } as const;
+  const lockStatus = await getLoginLockStatus(lockTarget, ip);
+
+  // Spärren gäller bara inloggningen – den publika rotationssidan påverkas inte.
+  if (lockStatus.locked) {
+    redirect(withError(loginPath, loginLockMessage(lockStatus)));
+  }
+
+  if (!passwordsMatch(password, createDepartmentPassword(department.passwordWord))) {
+    const result = await registerFailedLogin(lockTarget, ip);
     await logAdminEvent({
       eventType: "department.login.failed",
       message: "Felaktigt avdelningslösenord angavs.",
-      departmentId: department.id
+      departmentId: department.id,
+      metadata: { ip }
     });
+
+    if (result.justLocked) {
+      await logAdminEvent({
+        eventType: result.justLocked === "permanent" ? "department.login.lockedPermanently" : "department.login.locked",
+        message:
+          result.justLocked === "permanent"
+            ? "Avdelningsinloggningen låstes tills siteadmin låser upp den."
+            : "Avdelningsinloggningen spärrades i 10 minuter efter för många felaktiga försök.",
+        departmentId: department.id,
+        metadata: { ip }
+      });
+    }
+
     redirect(
       withError(
-        `/departments/${department.id}/login`,
-        "Fel lösenord. Använd passwordWord följt av aktuell serverminut."
+        loginPath,
+        result.status.locked ? loginLockMessage(result.status) : failedLoginMessage(result.attemptsLeft)
       )
     );
   }
 
+  await clearLoginLock(lockTarget, ip);
   await setDepartmentSession(department.id);
-  await clearFailedDepartmentLogins(department.id);
   redirect(withSuccess(`/departments/${department.id}`, "Inloggning lyckades."));
 }
 
@@ -428,9 +521,12 @@ export async function deleteZoneAction(formData: FormData) {
   await requireDepartmentAuth(departmentId);
 
   try {
-    await prisma.zone.delete({ where: { id: zoneId } });
+    await prisma.zone.delete({ where: { id: zoneId, departmentId } });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+    if (isPrismaError(error, "P2025")) {
+      redirect(withError(`/departments/${departmentId}/edit`, "Zonen finns inte."));
+    }
+    if (isPrismaError(error, "P2003")) {
       redirect(
         withError(
           `/departments/${departmentId}/edit`,
@@ -464,7 +560,7 @@ export async function createGroupAction(formData: FormData) {
       }
     });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaError(error, "P2002")) {
       redirect(withError(`/departments/${departmentId}/edit`, "Det finns redan en grupp med det namnet."));
     }
     throw error;
@@ -485,10 +581,20 @@ export async function updateGroupAction(formData: FormData) {
     redirect(withError(`/departments/${departmentId}/edit`, parsed.error.issues[0]?.message ?? "Ogiltig grupp."));
   }
 
-  await prisma.group.update({
-    where: { id: groupId },
-    data: { name: parsed.data.name }
-  });
+  try {
+    await prisma.group.update({
+      where: { id: groupId, departmentId },
+      data: { name: parsed.data.name }
+    });
+  } catch (error) {
+    if (isPrismaError(error, "P2025")) {
+      redirect(withError(`/departments/${departmentId}/edit`, "Gruppen finns inte."));
+    }
+    if (isPrismaError(error, "P2002")) {
+      redirect(withError(`/departments/${departmentId}/edit`, "Det finns redan en grupp med det namnet."));
+    }
+    throw error;
+  }
 
   revalidatePath(`/departments/${departmentId}/edit`);
   revalidatePath(`/departments/${departmentId}/people`);
@@ -501,8 +607,8 @@ export async function deleteGroupAction(formData: FormData) {
   const groupId = getString(formData, "groupId");
   await requireDepartmentAuth(departmentId);
 
-  const group = await prisma.group.findUnique({
-    where: { id: groupId },
+  const group = await prisma.group.findFirst({
+    where: { id: groupId, departmentId },
     include: {
       _count: {
         select: { people: true, rotations: true }
@@ -523,7 +629,7 @@ export async function deleteGroupAction(formData: FormData) {
     );
   }
 
-  await prisma.group.delete({ where: { id: groupId } });
+  await prisma.group.delete({ where: { id: groupId, departmentId } });
   revalidatePath(`/departments/${departmentId}/edit`);
   revalidatePath(`/departments/${departmentId}/people`);
   revalidatePath(`/departments/${departmentId}`);
@@ -545,6 +651,10 @@ export async function createPersonAction(formData: FormData) {
 
   if (!parsed.success) {
     redirect(withError(`/departments/${departmentId}/people`, parsed.error.issues[0]?.message ?? "Ogiltig person."));
+  }
+
+  if (!(await groupBelongsToDepartment(parsed.data.groupId, departmentId))) {
+    redirect(withError(`/departments/${departmentId}/people`, "Välj en giltig grupp."));
   }
 
   const duplicateRedirectPath = peoplePath(departmentId, redirectGroupId || parsed.data.groupId);
@@ -647,10 +757,21 @@ export async function updatePersonAction(formData: FormData) {
     redirect(withError(`/departments/${departmentId}/people`, parsed.error.issues[0]?.message ?? "Ogiltig person."));
   }
 
-  await prisma.person.update({
-    where: { id: personId },
-    data: parsed.data
-  });
+  if (!(await groupBelongsToDepartment(parsed.data.groupId, departmentId))) {
+    redirect(withError(peoplePath(departmentId, redirectGroupId), "Välj en giltig grupp."));
+  }
+
+  try {
+    await prisma.person.update({
+      where: { id: personId, departmentId },
+      data: parsed.data
+    });
+  } catch (error) {
+    if (isPrismaError(error, "P2025")) {
+      redirect(withError(peoplePath(departmentId, redirectGroupId), "Personen finns inte."));
+    }
+    throw error;
+  }
 
   revalidatePath(`/departments/${departmentId}/people`);
   revalidatePath(`/departments/${departmentId}/rotation`);
@@ -665,11 +786,14 @@ export async function deletePersonAction(formData: FormData) {
   await requireDepartmentAuth(departmentId);
 
   try {
-    await prisma.person.delete({ where: { id: personId } });
+    await prisma.person.delete({ where: { id: personId, departmentId } });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+    if (isPrismaError(error, "P2025")) {
+      redirect(withError(peoplePath(departmentId, redirectGroupId), "Personen finns inte."));
+    }
+    if (isPrismaError(error, "P2003")) {
       await prisma.person.update({
-        where: { id: personId },
+        where: { id: personId, departmentId },
         data: {
           active: false,
           archived: true,

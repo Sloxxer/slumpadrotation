@@ -20,6 +20,7 @@ model Department {
   people       Person[]
   rotations    Rotation[]
   adminLogs    AdminLog[]
+  loginLocks   LoginLock[]
 }
 
 model Zone {
@@ -115,4 +116,22 @@ model AdminLog {
   @@index([createdAt(sort: Desc)])
   @@index([eventType, createdAt(sort: Desc)])
   @@index([departmentId, createdAt(sort: Desc)])
+}
+
+// Misslyckade inloggningar räknas per avdelning (eller siteadmin) och IP-adress,
+// så att en utomstående inte kan låsa ute en hel avdelning.
+model LoginLock {
+  id                String      @id @default(cuid())
+  scope             String      // "department:<id>" eller "site-admin"
+  ip                String
+  failures          Int         @default(0)
+  lockedUntil       DateTime?
+  permanentlyLocked Boolean     @default(false)
+  lastFailureAt     DateTime    @default(now())
+  createdAt         DateTime    @default(now())
+  departmentId      String?
+  department        Department? @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([scope, ip])
+  @@index([departmentId])
 }

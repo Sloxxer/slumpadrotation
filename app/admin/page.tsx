@@ -4,6 +4,7 @@ import {
   createDepartmentAction,
   logoutSiteAdminAction,
   setDepartmentArchivedAction,
+  unlockLoginAction,
   updateDepartmentPasswordWordAction
 } from "@/app/actions";
 import { EmptyState, Panel } from "@/components/cards";
@@ -23,7 +24,7 @@ export default async function AdminPage({
   const query = await searchParams;
   await requireSiteAdminAuth();
 
-  const [departments, logs] = await Promise.all([
+  const [departments, logs, loginLocks] = await Promise.all([
     prisma.department.findMany({
       orderBy: { createdAt: "asc" },
       include: {
@@ -49,6 +50,17 @@ export default async function AdminPage({
     prisma.adminLog.findMany({
       orderBy: { createdAt: "desc" },
       take: 30,
+      include: {
+        department: {
+          select: { name: true }
+        }
+      }
+    }),
+    prisma.loginLock.findMany({
+      where: {
+        OR: [{ permanentlyLocked: true }, { lockedUntil: { gt: new Date() } }]
+      },
+      orderBy: { lastFailureAt: "desc" },
       include: {
         department: {
           select: { name: true }
@@ -256,6 +268,43 @@ export default async function AdminPage({
         </div>
 
         <div className="space-y-5">
+          <Panel className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-ink">Spärrade inloggningar</h2>
+              <span className="text-sm text-stone-500">Per avdelning och IP-adress</span>
+            </div>
+            {loginLocks.length === 0 ? (
+              <p className="text-sm text-stone-500">Inga inloggningar är spärrade just nu.</p>
+            ) : (
+              <div className="space-y-3">
+                {loginLocks.map((lock) => (
+                  <div
+                    key={lock.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 p-4 text-sm dark:border-[#334155]"
+                  >
+                    <div>
+                      <p className="font-semibold text-ink">{lock.department?.name ?? "Siteadmin"}</p>
+                      <p className="mt-1 text-stone-500">
+                        IP {lock.ip} • {lock.failures} felaktiga försök •{" "}
+                        {lock.permanentlyLocked
+                          ? "låst tills den låses upp"
+                          : `spärrad till ${formatDate(lock.lockedUntil!)}`}
+                      </p>
+                    </div>
+                    <form action={unlockLoginAction}>
+                      <input type="hidden" name="lockId" value={lock.id} />
+                      <SubmitButton
+                        label="Lås upp"
+                        pendingLabel="Låser upp..."
+                        className="rounded-2xl bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-teal dark:bg-teal dark:hover:bg-[#3d9298]"
+                      />
+                    </form>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+
           <Panel className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-ink">Säkerhet och status</h2>
