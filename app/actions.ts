@@ -23,13 +23,16 @@ import {
   registerFailedLogin
 } from "@/lib/login-lock";
 import { prisma } from "@/lib/prisma";
+import { buildLiveSchedule, type LiveMode } from "@/lib/live-rotation";
 import { generateRotation } from "@/lib/rotation";
 import {
   departmentSchema,
   groupSchema,
+  liveSettingsSchema,
   peopleChangesSchema,
   personSchema,
   rotationZoneOrderSchema,
+  scheduleSchema,
   transferPeopleSchema,
   zoneSchema
 } from "@/lib/validation";
@@ -774,6 +777,98 @@ export async function deleteGroupAction(formData: FormData) {
   redirect(withSuccess(`/departments/${departmentId}/edit`, "Skiftet togs bort."));
 }
 
+function schedulePath(departmentId: string) {
+  return `/departments/${departmentId}/schedule`;
+}
+
+function toLiveMode(value: string): LiveMode {
+  return value === "schedule" || value === "continuous" ? value : "off";
+}
+
+export async function updateLiveSettingsAction(formData: FormData) {
+  const departmentId = getString(formData, "departmentId");
+  await requireDepartmentAuth(departmentId);
+
+  const parsed = liveSettingsSchema.safeParse({
+    liveMode: getString(formData, "liveMode"),
+    rotationIntervalMin: getString(formData, "rotationIntervalMin"),
+    minPassMin: getString(formData, "minPassMin")
+  });
+
+  if (!parsed.success) {
+    redirect(withError(schedulePath(departmentId), parsed.error.issues[0]?.message ?? "Ogiltiga inställningar."));
+  }
+
+  await prisma.department.update({ where: { id: departmentId }, data: parsed.data });
+
+  revalidatePath(schedulePath(departmentId));
+  redirect(withSuccess(schedulePath(departmentId), "Inställningarna för live-rotation sparades."));
+}
+
+// Skapar ett nytt schema (utan scheduleId) eller ersätter ett befintligt,
+// inklusive alla raster.
+export async function saveScheduleAction(formData: FormData) {
+  const departmentId = getString(formData, "departmentId");
+  const scheduleId = getString(formData, "scheduleId");
+  await requireDepartmentAuth(departmentId);
+
+  let rawSchedule: unknown;
+  try {
+    rawSchedule = JSON.parse(getString(formData, "schedule"));
+  } catch {
+    redirect(withError(schedulePath(departmentId), "Kunde inte läsa schemat. Försök igen."));
+  }
+
+  const parsed = scheduleSchema.safeParse(rawSchedule);
+  if (!parsed.success) {
+    redirect(withError(schedulePath(departmentId), parsed.error.issues[0]?.message ?? "Ogiltigt schema."));
+  }
+
+  const { name, start, end, breaks } = parsed.data;
+  const breakRows = breaks.map((item) => ({
+    label: item.label,
+    startMinute: item.start,
+    durationMinutes: item.durationMinutes
+  }));
+
+  if (scheduleId) {
+    const existing = await prisma.workSchedule.findFirst({ where: { id: scheduleId, departmentId }, select: { id: true } });
+    if (!existing) {
+      redirect(withError(schedulePath(departmentId), "Schemat finns inte längre."));
+    }
+
+    await prisma.$transaction([
+      prisma.workSchedule.update({
+        where: { id: scheduleId },
+        data: { name, startMinute: start, endMinute: end }
+      }),
+      prisma.scheduleBreak.deleteMany({ where: { scheduleId } }),
+      prisma.scheduleBreak.createMany({ data: breakRows.map((row) => ({ ...row, scheduleId })) })
+    ]);
+  } else {
+    await prisma.workSchedule.create({
+      data: { departmentId, name, startMinute: start, endMinute: end, breaks: { create: breakRows } }
+    });
+  }
+
+  revalidatePath(schedulePath(departmentId));
+  redirect(withSuccess(schedulePath(departmentId), `Schemat ${name} sparades.`));
+}
+
+export async function deleteScheduleAction(formData: FormData) {
+  const departmentId = getString(formData, "departmentId");
+  const scheduleId = getString(formData, "scheduleId");
+  await requireDepartmentAuth(departmentId);
+
+  const deleted = await prisma.workSchedule.deleteMany({ where: { id: scheduleId, departmentId } });
+  if (deleted.count === 0) {
+    redirect(withError(schedulePath(departmentId), "Schemat finns inte längre."));
+  }
+
+  revalidatePath(schedulePath(departmentId));
+  redirect(withSuccess(schedulePath(departmentId), "Schemat togs bort."));
+}
+
 export async function createPersonAction(formData: FormData) {
   const departmentId = getString(formData, "departmentId");
   const redirectGroupId = getString(formData, "redirectGroupId");
@@ -1005,7 +1100,7 @@ export async function generateRotationAction(formData: FormData) {
     orderedSlots = parsed.data;
   }
 
-  const [group, existingZones, groupPeople, previousRotations] = await Promise.all([
+  const [group, existingZones, groupPeople, previousRotations, liveSettings] = await Promise.all([
     prisma.group.findFirst({
       where: { id: groupId, departmentId },
       select: { id: true, name: true }
@@ -1031,6 +1126,15 @@ export async function generateRotationAction(formData: FormData) {
           }
         }
       }
+    }),
+    prisma.department.findUnique({
+      where: { id: departmentId },
+      select: {
+        liveMode: true,
+        rotationIntervalMin: true,
+        minPassMin: true,
+        schedules: { include: { breaks: true } }
+      }
     })
   ]);
 
@@ -1052,6 +1156,18 @@ export async function generateRotationAction(formData: FormData) {
   const activePeople = groupPeople
     .filter((person) => selectedPersonIds.includes(person.id))
     .map(({ id, name }) => ({ id, name }));
+
+  // Tider och raster för live-vyn väljs utifrån när rotationen skapas och sparas
+  // med rotationen, så att senare schemaändringar inte påverkar en pågående rotation.
+  const liveSchedule = liveSettings
+    ? buildLiveSchedule({
+        mode: toLiveMode(liveSettings.liveMode),
+        intervalMin: liveSettings.rotationIntervalMin,
+        minPassMin: liveSettings.minPassMin,
+        schedules: liveSettings.schedules,
+        now: Date.now()
+      })
+    : null;
 
   let generated: ReturnType<typeof generateRotation>;
   let createdRotationId = "";
@@ -1132,6 +1248,7 @@ export async function generateRotationAction(formData: FormData) {
           departmentId,
           groupId,
           score: generatedRotation.score,
+          liveSchedule: liveSchedule ? JSON.stringify(liveSchedule) : null,
           assignments: {
             create: generatedRotation.assignments.map((assignment) => ({
               zoneId: assignment.zoneId,

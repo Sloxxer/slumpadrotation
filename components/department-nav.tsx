@@ -4,12 +4,13 @@ import { SubmitButton } from "@/components/submit-button";
 import { hasDepartmentSession, isSiteAdminAuthenticated } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-export type DepartmentSection = "overview" | "zones" | "people" | "history";
+export type DepartmentSection = "overview" | "zones" | "people" | "schedule" | "history";
 
 const sections: Array<{ key: DepartmentSection; label: string; path: string }> = [
   { key: "overview", label: "Översikt", path: "" },
   { key: "zones", label: "Zoner och skift", path: "/edit" },
   { key: "people", label: "Personer", path: "/people" },
+  { key: "schedule", label: "Schema", path: "/schedule" },
   { key: "history", label: "Historik", path: "/rotations" }
 ];
 

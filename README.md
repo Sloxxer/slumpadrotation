@@ -67,5 +67,6 @@ pm2 save
 - Slumpad rotation med poängbaserad algoritm
 - Visning av personer som inte är tilldelade en zon
 - Sparad rotationshistorik
+- Live-rotation: efter att rotationen skapats visar fönstret live vem som står i vilken zon, med byten var X:e minut och raster enligt avdelningens scheman (Förmiddag/Eftermiddag/Natt) eller utan raster
 - Mörkt läge
 - Siteadmin-panel med rotationssimulering och revisionslogg

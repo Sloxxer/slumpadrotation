@@ -4,6 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { RotationGroupForm } from "@/components/rotation-group-form";
 import { RotationResultModal } from "@/components/rotation-result-modal";
 import { StatusMessage } from "@/components/status-message";
+import { parseLiveSchedule } from "@/lib/live-rotation";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
 
@@ -169,6 +170,7 @@ export default async function PublicRotationDepartmentPage({
           groupName={rotation.group.name}
           score={rotation.score}
           animate={query.noAnim !== "1"}
+          liveSchedule={parseLiveSchedule(rotation.liveSchedule)}
           assignments={rotation.assignments}
           unassignedPeople={unassignedPeople}
         />
