@@ -37,6 +37,8 @@ SESSION_SECRET="..."   # signs auth cookies; random per-process fallback if unse
 
 **Rotation algorithm** (`lib/rotation.ts`): Assigns people to zones with a scoring system that penalizes repeated zones and adjacent neighbor repetition (circular layout). `generateRotationAction` in `actions.ts` compares against the last rotation to avoid repetition.
 
+**Live rotation** (`lib/live-rotation.ts`, pure logic shared by server and browser): per department `liveMode` (`off` / `schedule` / `continuous`), `rotationIntervalMin` and `minPassMin`, plus `WorkSchedule` + `ScheduleBreak` (minutes after midnight, Europe/Stockholm; end < start = overnight). When a rotation is created, `buildLiveSchedule` picks the schedule whose start is nearest (from 60 min before start until its end) and stores a JSON snapshot on `Rotation.liveSchedule`. The result modal recomputes segments client-side every second: everyone moves one zone forward per switch; switches are on a fixed grid from shift start, breaks pause everything, and a pass shorter than `minPassMin` skips the next switch. Settings UI: `/departments/[id]/schedule`.
+
 **Database** (`prisma/`): SQLite via Prisma. Core models: `Department → Zone | Group | Person → Rotation → RotationAssignment`. `AdminLog` stores an audit trail of all admin actions. Migration history is in `prisma/migrations/`.
 
 **Validation** (`lib/validation.ts`): Zod schemas for all form inputs. Always validate through these schemas in server actions before touching the database.

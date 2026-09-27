@@ -11,6 +11,11 @@ model Department {
   id           String     @id @default(cuid())
   name         String
   passwordWord String
+  // Live-rotation: "off", "schedule" (scheman med raster) eller "continuous" (byter hela tiden).
+  liveMode              String  @default("off")
+  rotationIntervalMin   Int     @default(20)
+  // Blir ett pass kortare än så här (t.ex. efter en rast) hoppas nästa byte över.
+  minPassMin            Int     @default(5)
   archived     Boolean    @default(false)
   archivedAt   DateTime?
   createdAt    DateTime   @default(now())
@@ -21,6 +26,7 @@ model Department {
   rotations    Rotation[]
   adminLogs    AdminLog[]
   loginLocks   LoginLock[]
+  schedules    WorkSchedule[]
 }
 
 model Zone {
@@ -78,6 +84,8 @@ model Rotation {
   id           String               @id @default(cuid())
   createdAt    DateTime             @default(now())
   score        Int
+  // Ögonblicksbild (JSON) av tider och raster som gällde när rotationen skapades.
+  liveSchedule String?
   departmentId String
   groupId      String
   department   Department           @relation(fields: [departmentId], references: [id], onDelete: Cascade)
@@ -134,4 +142,32 @@ model LoginLock {
 
   @@unique([scope, ip])
   @@index([departmentId])
+}
+
+// Arbetstidsschema, t.ex. Förmiddag 06:00–14:30. Tider i minuter efter midnatt
+// (svensk tid). Slutar schemat före starttiden går det över midnatt (natt).
+model WorkSchedule {
+  id           String          @id @default(cuid())
+  name         String
+  startMinute  Int
+  endMinute    Int
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  departmentId String
+  department   Department      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  breaks       ScheduleBreak[]
+
+  @@index([departmentId])
+}
+
+// Rast där hela skiftet stannar, t.ex. Lunch 10:00 i 30 minuter.
+model ScheduleBreak {
+  id              String       @id @default(cuid())
+  label           String
+  startMinute     Int
+  durationMinutes Int
+  scheduleId      String
+  schedule        WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId])
 }

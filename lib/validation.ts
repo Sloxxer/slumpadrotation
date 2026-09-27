@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { shiftLengthMinutes, timeToMinute } from "@/lib/live-rotation";
 
 export const departmentSchema = z.object({
   name: z.string().trim().min(1, "Ange ett namn för avdelningen."),
@@ -57,3 +58,62 @@ export const peopleChangesSchema = z
   )
   .min(1, "Det finns inga ändringar att spara.")
   .max(500, "För många ändringar på en gång.");
+
+// ---------- Live-rotation ----------
+
+const timeSchema = (message: string) =>
+  z
+    .string()
+    .trim()
+    .refine((value) => timeToMinute(value) !== null, message)
+    .transform((value) => timeToMinute(value)!);
+
+export const liveSettingsSchema = z.object({
+  liveMode: z.enum(["off", "schedule", "continuous"], { message: "Välj hur live-rotationen ska fungera." }),
+  rotationIntervalMin: z.coerce
+    .number()
+    .int()
+    .min(5, "Bytesintervallet måste vara minst 5 minuter.")
+    .max(240, "Bytesintervallet får vara högst 240 minuter."),
+  minPassMin: z.coerce
+    .number()
+    .int()
+    .min(0, "Minsta passlängd kan inte vara negativ.")
+    .max(60, "Minsta passlängd får vara högst 60 minuter.")
+});
+
+export const scheduleSchema = z
+  .object({
+    name: z.string().trim().min(1, "Ange ett namn för schemat.").max(40, "Namnet är för långt."),
+    start: timeSchema("Ange en giltig starttid."),
+    end: timeSchema("Ange en giltig sluttid."),
+    breaks: z
+      .array(
+        z.object({
+          label: z.string().trim().min(1, "Ange ett namn för varje rast.").max(40, "Rastens namn är för långt."),
+          start: timeSchema("Ange en giltig tid för varje rast."),
+          durationMinutes: z.coerce
+            .number()
+            .int()
+            .min(1, "En rast måste vara minst 1 minut.")
+            .max(180, "En rast får vara högst 180 minuter.")
+        })
+      )
+      .max(12, "För många raster.")
+  })
+  .superRefine((schedule, ctx) => {
+    const length = shiftLengthMinutes(schedule.start, schedule.end);
+    const ranges = schedule.breaks
+      .map((item) => ({ ...item, offset: (item.start - schedule.start + 1440) % 1440 }))
+      .sort((a, b) => a.offset - b.offset);
+
+    ranges.forEach((item, index) => {
+      if (item.offset + item.durationMinutes > length) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${item.label} ligger utanför schemats tider.` });
+      }
+      const previous = ranges[index - 1];
+      if (previous && previous.offset + previous.durationMinutes > item.offset) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${previous.label} och ${item.label} överlappar.` });
+      }
+    });
+  });
